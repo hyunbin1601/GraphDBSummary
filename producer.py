@@ -9,8 +9,8 @@ from neo4j_driver import driver
 KAFKA_BOOTSTRAP_SERVERS = os.getenv(
     "KAFKA_BOOTSTRAP_SERVERS", "172.31.11.219:19092"
 ).split(",")
-INPUT_TOPIC = os.getenv("KAFKA_INPUT_TOPIC", "trace_input")
-OUTPUT_TOPIC = os.getenv("KAFKA_OUTPUT_TOPIC", "ensemble_predict")
+INPUT_TOPIC = os.getenv("KAFKA_INPUT_TOPIC", "ensemble_predict")
+OUTPUT_TOPIC = os.getenv("KAFKA_OUTPUT_TOPIC", "llm_result")
 
 # 프롬프트 파일은 프로젝트 루트의 summary_prompt.md를 기본으로 사용
 PROMPT_FILE = os.path.join(os.path.dirname(__file__), "summary_prompt.md")

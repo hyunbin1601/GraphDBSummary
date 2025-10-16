@@ -1,0 +1,7 @@
+kafka-python==2.0.2
+neo4j==5.25.0
+sentence-transformers==3.0.1
+numpy==1.26.4
+tqdm==4.66.5
+langchain-openai==0.2.3
+python-dotenv==1.0.1
