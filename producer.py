@@ -36,11 +36,22 @@ def build_consumer():
     return KafkaConsumer(
         INPUT_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        value_deserializer=lambda m: safe_json_decode(m.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=True,
         group_id=os.getenv("KAFKA_CONSUMER_GROUP", "graphdb-summary-consumer"),
     )
+
+
+def safe_json_decode(json_str):
+    """JSON 파싱 오류를 안전하게 처리 - OTLP 형식도 처리"""
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        print(f"JSON 파싱 오류 (OTLP 형식일 수 있음): {e}")
+        print(f"원본 문자열 길이: {len(json_str)}")
+        # OTLP 형식으로 가정하고 원본 문자열을 dict로 래핑
+        return {"raw_otlp_data": json_str}
 
 
 def extract_trace_input(msg_value):
@@ -135,6 +146,20 @@ def _iter_traces_from_message(msg_value):
         return {}
 
     if isinstance(msg_value, dict):
+        # JSON 파싱 실패한 OTLP 원본 데이터 처리
+        if "raw_otlp_data" in msg_value:
+            raw_data = msg_value["raw_otlp_data"]
+            try:
+                # 다시 JSON 파싱 시도
+                parsed = json.loads(raw_data)
+                yield from _iter_traces_from_message(parsed)
+                return
+            except json.JSONDecodeError:
+                # 여전히 파싱 실패하면 원본 문자열을 그대로 처리
+                print(f"OTLP 원본 데이터를 문자열로 처리합니다. 길이: {len(raw_data)}")
+                yield {"raw_string": raw_data}, {}
+                return
+
         if "resourceSpans" in msg_value:
             yield msg_value, _passthrough_from(msg_value)
             return
@@ -228,3 +253,4 @@ if __name__ == "__main__":
                 )
         except Exception as e:
             print(f"메시지 처리 중 오류: {e}")
+            print(f"메시지 내용: {str(message.value)[:200]}...")
