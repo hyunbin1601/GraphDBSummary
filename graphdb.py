@@ -7,7 +7,7 @@ from sentence_transformers import SentenceTransformer
 
 DATABASE = "neo4j"
 
-embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # 더 작은 모델 사용
 
 
 def create_summary_context(trace_data):
@@ -15,8 +15,8 @@ def create_summary_context(trace_data):
 
     def get_tag_value(tags, key, default=None):
         for tag in tags:
-            if tag.get('key') == key:
-                return tag.get('value')
+            if tag.get("key") == key:
+                return tag.get("value")
         return default
 
     sigma_alerts = Counter()
@@ -25,37 +25,45 @@ def create_summary_context(trace_data):
     file_events = Counter()
     registry_events = Counter()
 
-    for span in trace_data.get('spans', []):
-        tags = span.get('tags', [])
-        event_name = get_tag_value(tags, 'EventName', '')
-        process_image = get_tag_value(tags, 'Image')
-        process_name = os.path.basename(process_image or 'N/A')
+    for span in trace_data.get("spans", []):
+        tags = span.get("tags", [])
+        event_name = get_tag_value(tags, "EventName", "")
+        process_image = get_tag_value(tags, "Image")
+        process_name = os.path.basename(process_image or "N/A")
 
         # Sigma 룰 탐지
-        rule_title = get_tag_value(tags, 'sigma.rule_title')
+        rule_title = get_tag_value(tags, "sigma.rule_title")
         if rule_title:
             sigma_alerts[f"규칙: {rule_title}, 프로세스: {process_name}"] += 1
 
         # 프로세스 생성 흐름
         if "ProcessCreate" in event_name:
-            parent_image = get_tag_value(tags, 'ParentImage')
+            parent_image = get_tag_value(tags, "ParentImage")
             if parent_image and process_image:
-                process_flows[f"'{os.path.basename(parent_image)}'가 '{process_name}'를 실행"] += 1
+                process_flows[
+                    f"'{os.path.basename(parent_image)}'가 '{process_name}'를 실행"
+                ] += 1
 
         # 네트워크/파일/레지스트리 이벤트
         if "NetworkConnect" in event_name:
-            dest_ip = get_tag_value(tags, 'DestinationIp')
-            dest_port = get_tag_value(tags, 'DestinationPort')
+            dest_ip = get_tag_value(tags, "DestinationIp")
+            dest_port = get_tag_value(tags, "DestinationPort")
             if dest_ip and dest_port:
-                network_events[f"[네트워크] '{process_name}'가 '{dest_ip}:{dest_port}'로 연결"] += 1
+                network_events[
+                    f"[네트워크] '{process_name}'가 '{dest_ip}:{dest_port}'로 연결"
+                ] += 1
         elif "FileCreate" in event_name:
-            target_file = get_tag_value(tags, 'TargetFilename')
+            target_file = get_tag_value(tags, "TargetFilename")
             if target_file:
-                file_events[f"[파일] '{process_name}'가 '{target_file}' 파일을 생성"] += 1
+                file_events[
+                    f"[파일] '{process_name}'가 '{target_file}' 파일을 생성"
+                ] += 1
         elif "RegistryValueSet" in event_name:
-            target_object = get_tag_value(tags, 'TargetObject')
+            target_object = get_tag_value(tags, "TargetObject")
             if target_object:
-                registry_events[f"[레지스트리] '{process_name}'가 '{target_object}' 키 값을 수정"] += 1
+                registry_events[
+                    f"[레지스트리] '{process_name}'가 '{target_object}' 키 값을 수정"
+                ] += 1
 
     # 컨텍스트 생성
     if sigma_alerts:
@@ -80,13 +88,15 @@ def create_summary_context(trace_data):
 
 def summarize_trace_with_llm(trace_input, prompt_template):
     if isinstance(trace_input, str):
-        with open(trace_input, 'r', encoding='utf-8-sig') as f:
+        with open(trace_input, "r", encoding="utf-8-sig") as f:
             trace_data = json.load(f)
     else:
         trace_data = trace_input
 
     summary_context = create_summary_context(trace_data)
-    final_prompt = prompt_template.replace("[분석할 JSON 데이터가 여기에 삽입됩니다]", summary_context)
+    final_prompt = prompt_template.replace(
+        "[분석할 JSON 데이터가 여기에 삽입됩니다]", summary_context
+    )
 
     try:
         response = llm.invoke(final_prompt)
@@ -96,14 +106,17 @@ def summarize_trace_with_llm(trace_input, prompt_template):
 
         cleaned_content = raw_content.strip()
         if cleaned_content.startswith("```json"):
-            cleaned_content = cleaned_content.split('\n', 1)[1]
+            cleaned_content = cleaned_content.split("\n", 1)[1]
         if cleaned_content.endswith("```"):
-            cleaned_content = cleaned_content.rsplit('\n', 1)[0]
+            cleaned_content = cleaned_content.rsplit("\n", 1)[0]
 
         analysis_result = json.loads(cleaned_content.strip())
         return analysis_result
     except json.JSONDecodeError:
-        return {"error": "LLM이 유효한 JSON을 반환하지 않았습니다.", "raw_response": raw_content}
+        return {
+            "error": "LLM이 유효한 JSON을 반환하지 않았습니다.",
+            "raw_response": raw_content,
+        }
     except Exception as e:
         return {"error": f"LLM 호출 중 오류 발생: {e}"}
 
@@ -118,52 +131,54 @@ def cosine_similarity(vec1, vec2):
 
 def find_similar_traces(driver, summary_text, top_k=5):
     with driver.session(database=DATABASE) as session:
-        all_summaries = session.run("""
+        all_summaries = session.run(
+            """
             MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
             RETURN 
                 coalesce(t.traceId, t.`traceId:ID(Trace)`) AS trace_id, 
                 s.embedding AS embedding
-        """)
+        """
+        )
 
         summary_embedding = embedding_model.encode(summary_text)
         similarities = []
 
         for record in all_summaries:
-            trace_id = record['trace_id']
-            emb = record['embedding']
+            trace_id = record["trace_id"]
+            emb = record["embedding"]
 
             if isinstance(emb, str):
                 try:
                     emb = json.loads(emb)
                 except json.JSONDecodeError:
-                    continue  
+                    continue
 
             if emb is None:
                 continue
 
             sim = cosine_similarity(summary_embedding, emb)
-            similarities.append({'trace_id': trace_id, 'similarity': sim})
+            similarities.append({"trace_id": trace_id, "similarity": sim})
 
-        similarities.sort(key=lambda x: x['similarity'], reverse=True)
+        similarities.sort(key=lambda x: x["similarity"], reverse=True)
         return similarities[:top_k]
 
 
-
-
-def generate_mitigation_prompt(summary_result, structural_similarity, indirect_connections):
+def generate_mitigation_prompt(
+    summary_result, structural_similarity, indirect_connections
+):
     """
     LLM에게 악성 행위 대응 방안을 요청하는 프롬프트 생성
     """
-    summary_text = summary_result.get('summary', '')
+    summary_text = summary_result.get("summary", "")
 
     similar_entities = set()
     similar_techniques = set()
     for s in structural_similarity:
-        similar_entities.update(s['common_entities'])
+        similar_entities.update(s["common_entities"])
 
     for c in indirect_connections:
-        similar_entities.add(c['e1_name'])
-        similar_entities.add(c['e2_name'])
+        similar_entities.add(c["e1_name"])
+        similar_entities.add(c["e2_name"])
 
     prompt = f"""
     당신은 보안 전문가입니다. 아래 트레이스 분석 정보를 바탕으로 기업 환경에서 발견된 악성 행위에 대한 
@@ -191,19 +206,20 @@ def generate_mitigation_prompt(summary_result, structural_similarity, indirect_c
 def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_k=5):
     # LLM 요약
     summary_result = summarize_trace_with_llm(new_trace, prompt_template)
-    if 'error' in summary_result:
+    if "error" in summary_result:
         return summary_result
-    summary_text = summary_result.get('summary', '')
+    summary_text = summary_result.get("summary", "")
 
     # 의미적 유사 트레이스 검색
     top_similar_traces = find_similar_traces(driver, summary_text, top_k=top_k)
-    similar_ids = [t['trace_id'] for t in top_similar_traces]
+    similar_ids = [t["trace_id"] for t in top_similar_traces]
 
     print(f"\n🔍 의미적 유사도 상위 {top_k} 트레이스: {similar_ids}\n")
 
     # 구조적 유사성 분석
     with driver.session(database=DATABASE) as session:
-        res = session.run("""
+        res = session.run(
+            """
             MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
             WHERE t.traceId IN $trace_ids
             OPTIONAL MATCH (s)-[:USES_TECHNIQUE]->(tech)
@@ -222,33 +238,37 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                 ) AS entities,
                 collect(DISTINCT tech.name) AS techniques
 
-        """, trace_ids=similar_ids)
+        """,
+            trace_ids=similar_ids,
+        )
 
         trace_entities = summary_result.get("key_entities", [])
         new_entities = set(
-            e['value'].strip().lower().replace('\\','/')  
+            e["value"].strip().lower().replace("\\", "/")
             for e in trace_entities
-            if isinstance(e, dict) and 'value' in e
+            if isinstance(e, dict) and "value" in e
         )
 
         comparisons = []
         for record in res:
 
             db_entities = set(
-                (e or '').strip().lower().replace('\\','/') 
-                for e in record['entities'] 
-                if e and e != '-'
+                (e or "").strip().lower().replace("\\", "/")
+                for e in record["entities"]
+                if e and e != "-"
             )
             # 공통 엔티티
             common_entities = new_entities & db_entities
 
-            comparisons.append({
-                'trace_id': record['trace_id'],
-                'common_entities': list(common_entities),
-                'entity_match_count': len(common_entities),
-            })
+            comparisons.append(
+                {
+                    "trace_id": record["trace_id"],
+                    "common_entities": list(common_entities),
+                    "entity_match_count": len(common_entities),
+                }
+            )
 
-        comparisons.sort(key=lambda x: (x['entity_match_count']), reverse=True)
+        comparisons.sort(key=lambda x: (x["entity_match_count"]), reverse=True)
 
         # 간접 연결 탐색
         with driver.session(database=DATABASE) as session:
@@ -292,21 +312,35 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                 LIMIT 50
 
             """
-            indirect_connections = session.run(query, trace_ids=similar_ids)
-            indirect_connections = [r.data() for r in indirect_connections]
+            indirect_connections_result = session.run(query, trace_ids=similar_ids)
+            indirect_connections_raw = [r.data() for r in indirect_connections_result]
+
+            # 중복 제거 (양방향 연결 고려)
+            seen_connections = set()
+            indirect_connections = []
+
+            for conn in indirect_connections_raw:
+                e1_name = conn["e1_name"]
+                e2_name = conn["e2_name"]
+                connection_key = tuple(sorted([e1_name, e2_name]))
+
+                if connection_key not in seen_connections:
+                    seen_connections.add(connection_key)
+                    indirect_connections.append(conn)
 
         #     # 대응 제안 생성
-        mitigation_prompt = generate_mitigation_prompt(summary_result, comparisons, indirect_connections)
+        mitigation_prompt = generate_mitigation_prompt(
+            summary_result, comparisons, indirect_connections
+        )
         mitigation_response = llm.invoke(mitigation_prompt)
 
         return {
-            'summary': summary_result,
-            'semantic_top_traces': top_similar_traces,
-            'structural_similarity': comparisons,
-            'indirect_connections': indirect_connections,
-            'mitigation_suggestions': mitigation_response.content
+            "summary": summary_result,
+            "semantic_top_traces": top_similar_traces,
+            "structural_similarity": comparisons,
+            "indirect_connections": indirect_connections,
+            "mitigation_suggestions": mitigation_response.content,
         }
 
+
 #     trace_path = "C:\\Users\\KISIA\\Downloads\\data\\T1018.json"
-
-
