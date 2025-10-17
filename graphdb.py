@@ -172,7 +172,6 @@ def generate_mitigation_prompt(
     summary_text = summary_result.get("summary", "")
 
     similar_entities = set()
-    similar_techniques = set()
     for s in structural_similarity:
         similar_entities.update(s["common_entities"])
 
