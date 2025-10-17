@@ -258,11 +258,18 @@ if __name__ == "__main__":
                         "traceId"
                     )
 
+                # summary에서 key_entities 제거하고 간단한 요약만 포함
+                summary_data = results.get("summary", {})
+                simple_summary = {
+                    "summary": summary_data.get("summary", ""),
+                    # "attack_techniques": summary_data.get("attack_techniques", []),
+                }
+
                 out_message = {
                     "traceID": source_trace_id,
-                    "similar_trace_ids": results.get("similar_trace_ids", []),
-                    "summary": results.get("summary", {}),
+                    "summary": simple_summary,
                     "long_summary": results.get("long_summary", ""),
+                    "similar_trace_ids": results.get("similar_trace_ids", []),
                     "mitigation_suggestions": results.get("mitigation_suggestions", ""),
                 }
                 out_message.update(passthrough)
