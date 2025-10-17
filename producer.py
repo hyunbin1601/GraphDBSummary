@@ -219,6 +219,28 @@ if __name__ == "__main__":
         try:
             raw_value = message.value
             for otlp_trace, passthrough in _iter_traces_from_message(raw_value):
+                # 정상으로 판정된 트레이스는 간단 처리
+                if passthrough.get("prediction") == "benign":
+                    source_trace_id = None
+                    if isinstance(otlp_trace, dict):
+                        source_trace_id = otlp_trace.get("traceID") or otlp_trace.get(
+                            "traceId"
+                        )
+
+                    out_message = {
+                        "traceID": source_trace_id,
+                        "summary": {"summary": "정상 트레이스입니다."},
+                        "long_summary": "## 상세 분석 요약\n\n### 분석 결과\n이 트레이스는 정상으로 분류되었습니다. 추가 분석이 필요하지 않습니다.",
+                        "similar_trace_ids": [],
+                        "mitigation_suggestions": "정상 트레이스로 판정되어 대응 조치가 필요하지 않습니다.",
+                    }
+                    out_message.update(passthrough)
+
+                    producer.send(OUTPUT_TOPIC, out_message)
+                    producer.flush()
+                    print(f"정상 트레이스 처리 완료: traceID={source_trace_id}")
+                    continue
+
                 trace_input = (
                     normalize_otlp_trace(otlp_trace)
                     if isinstance(otlp_trace, dict)
@@ -238,10 +260,9 @@ if __name__ == "__main__":
 
                 out_message = {
                     "traceID": source_trace_id,
+                    "similar_trace_ids": results.get("similar_trace_ids", []),
                     "summary": results.get("summary", {}),
-                    "semantic_top_traces": results.get("semantic_top_traces", []),
-                    "structural_similarity": results.get("structural_similarity", []),
-                    "indirect_connections": results.get("indirect_connections", []),
+                    "long_summary": results.get("long_summary", ""),
                     "mitigation_suggestions": results.get("mitigation_suggestions", ""),
                 }
                 out_message.update(passthrough)

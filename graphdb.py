@@ -121,6 +121,107 @@ def summarize_trace_with_llm(trace_input, prompt_template):
         return {"error": f"LLM 호출 중 오류 발생: {e}"}
 
 
+def long_summary(
+    driver,
+    summary_text,
+    structural_similarity,
+    indirect_connections,
+    semantic_top_traces,
+    top_k=3,
+):
+    """구조적 유사성, 간접 연결, 의미적 유사 트레이스를 활용한 상세 요약 생성"""
+
+    # 유사 트레이스 ID만 추출 (상위 3개)
+    similar_trace_ids = [t["trace_id"] for t in semantic_top_traces[:top_k]]
+
+    # LLM을 활용한 구조적 분석 프롬프트
+    analysis_prompt = """
+다음은 새로운 공격 트레이스와 기존 트레이스들 간의 구조적 유사성 분석 결과입니다.
+
+입력 데이터는 두 가지입니다:
+1. structural_similarity: 각 트레이스별로 공통된 엔티티와 일치 개수(entity_match_count)
+2. indirect_connections: 엔티티 간의 간접 연결 관계(최대 2-hop 경로)
+
+이 데이터를 기반으로 아래 내용을 **자연어로 종합적으로 요약**하세요.
+
+요약 시 포함할 내용:
+- 전반적인 구조적 유사성 경향  
+  (공통 엔티티가 많은 트레이스들의 특징, 주요 유사 구조나 공격 패턴)
+- 반복적으로 나타나는 핵심 엔티티(Process, File, IP, Registry 등)
+- 간접 연결에서 의미 있는 관계  
+  (예: 동일 파일을 여러 프로세스가 접근, 특정 IP로의 공통 네트워크 연결 등)
+- 전체적으로 어떤 공격 흐름 또는 전술과 유사한지  
+- 분석 결과에서 도출되는 구조적 인사이트나 시사점  
+
+출력은 자연스러운 분석 보고서처럼 작성하세요.  
+불필요한 형식 없이 문단 단위로 정리하고,  
+필요하면 bullet point를 사용해도 좋습니다.
+
+데이터:
+{
+  "structural_similarity": {{ structural_similarity }},
+  "indirect_connections": {{ indirect_connections }}
+}
+"""
+
+    try:
+        # 실제 프롬프트 생성
+        prompt = analysis_prompt.replace(
+            "{{ structural_similarity }}",
+            json.dumps(structural_similarity, ensure_ascii=False),
+        )
+        prompt = prompt.replace(
+            "{{ indirect_connections }}",
+            json.dumps(indirect_connections, ensure_ascii=False),
+        )
+
+        # LLM으로 구조적 분석 수행
+        response = llm.invoke(prompt)
+        structural_analysis = response.content.strip()
+
+        print("🔎 구조적 유사성 분석 요약 결과:")
+        print(response.content)
+
+        # 전체 상세 요약 생성
+        long_summary_text = f"""## 상세 분석 요약
+
+### 원본 트레이스 요약
+{summary_text}
+
+### 유사한 트레이스 분석
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
+
+### 구조적 유사성 및 연결 분석
+{structural_analysis}
+"""
+
+    except Exception as e:
+        # LLM 오류 시 기본 요약 반환
+        long_summary_text = f"""
+## 상세 분석 요약
+
+### 원본 트레이스 요약
+{summary_text}
+
+### 유사한 트레이스 분석
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
+
+### 구조적 유사성
+{len([s for s in structural_similarity if s['entity_match_count'] > 0])}개의 트레이스에서 구조적 유사성 발견
+
+### 간접 연결 관계
+{len(indirect_connections)}개의 간접 연결 관계 발견
+
+### 분석 결과
+이 트레이스는 {len(similar_trace_ids)}개의 유사한 트레이스와 연관되어 있으며, 총 {len(indirect_connections)}개의 간접 연결을 통해 다른 엔티티들과 연결되어 있습니다.
+"""
+
+    return {
+        "long_summary": long_summary_text.strip(),
+        "similar_trace_ids": similar_trace_ids,
+    }
+
+
 def cosine_similarity(vec1, vec2):
     v1 = np.array(vec1, dtype=float)
     v2 = np.array(vec2, dtype=float)
@@ -129,7 +230,7 @@ def cosine_similarity(vec1, vec2):
     return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
 
-def find_similar_traces(driver, summary_text, top_k=5):
+def find_similar_traces(driver, summary_text, top_k=3):
     with driver.session(database=DATABASE) as session:
         all_summaries = session.run(
             """
@@ -327,7 +428,17 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                     seen_connections.add(connection_key)
                     indirect_connections.append(conn)
 
-        #     # 대응 제안 생성
+        # 상세 요약 생성
+        long_summary_result = long_summary(
+            driver,
+            summary_text,
+            comparisons,
+            indirect_connections,
+            top_similar_traces,
+            top_k=3,
+        )
+
+        # 대응 제안 생성
         mitigation_prompt = generate_mitigation_prompt(
             summary_result, comparisons, indirect_connections
         )
@@ -335,9 +446,8 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
         return {
             "summary": summary_result,
-            "semantic_top_traces": top_similar_traces,
-            "structural_similarity": comparisons,
-            "indirect_connections": indirect_connections,
+            "long_summary": long_summary_result["long_summary"],
+            "similar_trace_ids": long_summary_result["similar_trace_ids"],
             "mitigation_suggestions": mitigation_response.content,
         }
 
