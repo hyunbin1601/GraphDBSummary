@@ -98,14 +98,19 @@ def normalize_otlp_trace(otlp_trace):
     # traceId는 각 span에 존재하므로 첫 span에서 가져옵니다.
     if not isinstance(otlp_trace, dict):
         return otlp_trace
+
+    # 먼저 최상위에서 traceID 찾기
+    norm["traceID"] = otlp_trace.get("traceID") or otlp_trace.get("traceId")
+
     resource_spans = otlp_trace.get("resourceSpans", [])
     for rs in resource_spans:
         scope_spans = rs.get("scopeSpans", [])
         for ss in scope_spans:
             spans = ss.get("spans", [])
             for sp in spans:
+                # span에서 traceID가 있으면 사용 (더 정확할 수 있음)
                 if norm["traceID"] is None:
-                    norm["traceID"] = sp.get("traceId") or otlp_trace.get("traceID")
+                    norm["traceID"] = sp.get("traceId")
                 tags = []
                 for attr in sp.get("attributes", []):
                     key = attr.get("key")
@@ -142,6 +147,8 @@ def _iter_traces_from_message(msg_value):
                 out["score"] = obj["score"]
             if "prediction" in obj:
                 out["prediction"] = obj["prediction"]
+            if "traceID" in obj:
+                out["traceID"] = obj["traceID"]
             return out
         return {}
 
@@ -160,16 +167,15 @@ def _iter_traces_from_message(msg_value):
                 yield {"raw_string": raw_data}, {}
                 return
 
+        # 사용자가 제공한 형식: {"traceID": "...", "score": ..., "prediction": "...", "trace": {...}}
+        if "trace" in msg_value and isinstance(msg_value["trace"], dict):
+            yield msg_value["trace"], _passthrough_from(msg_value)
+            return
+
         if "resourceSpans" in msg_value:
             yield msg_value, _passthrough_from(msg_value)
             return
-        if (
-            "trace" in msg_value
-            and isinstance(msg_value["trace"], dict)
-            and "resourceSpans" in msg_value["trace"]
-        ):
-            yield msg_value["trace"], _passthrough_from(msg_value)
-            return
+
         # dict지만 명확치 않으면 그대로 시도
         yield msg_value, _passthrough_from(msg_value)
         return
@@ -177,10 +183,10 @@ def _iter_traces_from_message(msg_value):
     if isinstance(msg_value, list):
         for item in msg_value:
             if isinstance(item, dict):
-                if "resourceSpans" in item:
-                    yield item, _passthrough_from(item)
-                elif "trace" in item and isinstance(item["trace"], dict):
+                if "trace" in item and isinstance(item["trace"], dict):
                     yield item["trace"], _passthrough_from(item)
+                elif "resourceSpans" in item:
+                    yield item, _passthrough_from(item)
                 else:
                     yield item, _passthrough_from(item)
         return
@@ -219,14 +225,25 @@ if __name__ == "__main__":
         try:
             raw_value = message.value
             for otlp_trace, passthrough in _iter_traces_from_message(raw_value):
-                # 정상으로 판정된 트레이스는 간단 처리
-                if passthrough.get("prediction") == "benign":
-                    source_trace_id = None
-                    if isinstance(otlp_trace, dict):
-                        source_trace_id = otlp_trace.get("traceID") or otlp_trace.get(
-                            "traceId"
-                        )
+                # 모든 트레이스에 대해 정규화 수행
+                trace_input = (
+                    normalize_otlp_trace(otlp_trace)
+                    if isinstance(otlp_trace, dict)
+                    else otlp_trace
+                )
 
+                # 입력 트레이스의 traceID를 결과에 포함(상관관계용)
+                source_trace_id = None
+                # 먼저 passthrough에서 traceID 확인 (사용자 제공 형식)
+                if passthrough.get("traceID"):
+                    source_trace_id = passthrough.get("traceID")
+                elif isinstance(trace_input, dict):
+                    source_trace_id = trace_input.get("traceID") or trace_input.get(
+                        "traceId"
+                    )
+
+                # 정상으로 판정된 트레이스는 간단한 요약으로 처리
+                if passthrough.get("prediction") == "benign":
                     out_message = {
                         "traceID": source_trace_id,
                         "summary": {"summary": "정상 트레이스입니다."},
@@ -241,22 +258,10 @@ if __name__ == "__main__":
                     print(f"정상 트레이스 처리 완료: traceID={source_trace_id}")
                     continue
 
-                trace_input = (
-                    normalize_otlp_trace(otlp_trace)
-                    if isinstance(otlp_trace, dict)
-                    else otlp_trace
-                )
-
+                # 악성 트레이스는 LLM 분석 수행
                 results = analyze_structural_similarity_no_db(
                     driver, trace_input, prompt_template, top_k=5
                 )
-
-                # 입력 트레이스의 traceID를 결과에 포함(상관관계용)
-                source_trace_id = None
-                if isinstance(trace_input, dict):
-                    source_trace_id = trace_input.get("traceID") or trace_input.get(
-                        "traceId"
-                    )
 
                 # summary에서 key_entities 제거하고 간단한 요약만 포함
                 summary_data = results.get("summary", {})
