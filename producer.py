@@ -167,6 +167,18 @@ def _iter_traces_from_message(msg_value):
                 yield {"raw_string": raw_data}, {}
                 return
 
+        # 사용자가 제공한 형식: {"traceID": "...", "score": ..., "prediction": "...", "trace": "..."}
+        if "trace" in msg_value and isinstance(msg_value["trace"], str):
+            try:
+                # trace가 JSON 문자열인 경우 파싱
+                parsed_trace = json.loads(msg_value["trace"])
+                yield parsed_trace, _passthrough_from(msg_value)
+                return
+            except json.JSONDecodeError:
+                # JSON 파싱 실패시 원본 문자열 그대로 처리
+                yield {"raw_string": msg_value["trace"]}, _passthrough_from(msg_value)
+                return
+
         # 사용자가 제공한 형식: {"traceID": "...", "score": ..., "prediction": "...", "trace": {...}}
         if "trace" in msg_value and isinstance(msg_value["trace"], dict):
             yield msg_value["trace"], _passthrough_from(msg_value)
@@ -251,7 +263,10 @@ if __name__ == "__main__":
                         "similar_trace_ids": [],
                         "mitigation_suggestions": "정상 트레이스로 판정되어 대응 조치가 필요하지 않습니다.",
                     }
-                    out_message.update(passthrough)
+                    # passthrough에서 traceID를 제외하고 업데이트 (traceID는 이미 설정됨)
+                    passthrough_copy = passthrough.copy()
+                    passthrough_copy.pop("traceID", None)
+                    out_message.update(passthrough_copy)
 
                     producer.send(OUTPUT_TOPIC, out_message)
                     producer.flush()
@@ -277,7 +292,10 @@ if __name__ == "__main__":
                     "similar_trace_ids": results.get("similar_trace_ids", []),
                     "mitigation_suggestions": results.get("mitigation_suggestions", ""),
                 }
-                out_message.update(passthrough)
+                # passthrough에서 traceID를 제외하고 업데이트 (traceID는 이미 설정됨)
+                passthrough_copy = passthrough.copy()
+                passthrough_copy.pop("traceID", None)
+                out_message.update(passthrough_copy)
 
                 producer.send(OUTPUT_TOPIC, out_message)
                 producer.flush()
