@@ -256,36 +256,57 @@ def find_similar_traces(driver, summary_text, top_k=3):
             print(f"⚠️ Trace 노드 속성 확인 실패: {e}. ID() 사용")
             trace_id_prop = "id(t)"
 
-        all_summaries = session.run(
-            f"""
+        query = f"""
             MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
             RETURN 
-                {trace_id_prop} AS trace_id, 
+                t.traceId AS trace_id, 
                 s.embedding AS embedding
         """
-        )
+        print(f"🔍 실행할 쿼리: {query}")
+
+        all_summaries = session.run(query)
 
         summary_embedding = embedding_model.encode(summary_text)
         similarities = []
 
+        print(
+            f"🔍 데이터베이스에서 {len(list(all_summaries))}개의 Summary를 찾았습니다."
+        )
+
+        # all_summaries를 다시 가져와야 함 (이미 소비됨)
+        all_summaries = session.run(query)
+
+        record_count = 0
         for record in all_summaries:
+            record_count += 1
             trace_id = record["trace_id"]
             emb = record["embedding"]
+
+            print(
+                f"   📊 Record {record_count}: trace_id={trace_id}, embedding_type={type(emb)}"
+            )
 
             if isinstance(emb, str):
                 try:
                     emb = json.loads(emb)
                 except json.JSONDecodeError:
+                    print(f"   ⚠️ JSON 파싱 실패: {trace_id}")
                     continue
 
             if emb is None:
+                print(f"   ⚠️ Embedding이 None: {trace_id}")
                 continue
 
             sim = cosine_similarity(summary_embedding, emb)
             similarities.append({"trace_id": trace_id, "similarity": sim})
+            print(f"   ✅ 유사도 계산: {trace_id} = {sim:.4f}")
 
+        print(f"📊 총 {len(similarities)}개의 유사도 계산 완료")
         similarities.sort(key=lambda x: x["similarity"], reverse=True)
-        return similarities[:top_k]
+
+        result = similarities[:top_k]
+        print(f"🎯 상위 {top_k}개 결과: {[r['trace_id'] for r in result]}")
+        return result
 
 
 def generate_mitigation_prompt(
@@ -328,13 +349,20 @@ def generate_mitigation_prompt(
 
 
 def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_k=3):
+    print("🔍 analyze_structural_similarity_no_db 시작...")
+
     # LLM 요약
+    print("📝 LLM 요약 시작...")
     summary_result = summarize_trace_with_llm(new_trace, prompt_template)
     if "error" in summary_result:
+        print(f"❌ LLM 요약 실패: {summary_result['error']}")
         return summary_result
 
     summary_text = summary_result.get("summary", "")
     print(f"✅ LLM 요약 완료: {len(summary_text)} 문자")
+    print(
+        f"📄 요약 내용: {summary_text[:200]}{'...' if len(summary_text) > 200 else ''}"
+    )
 
     if not summary_text:
         print("⚠️ 요약 텍스트가 비어있습니다.")
@@ -388,11 +416,11 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
             res = session.run(
                 f"""
                 MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
-                WHERE {trace_id_prop} IN $trace_ids
+                WHERE t.traceId IN $trace_ids
                 OPTIONAL MATCH (s)-[:USES_TECHNIQUE]->(tech)
                 OPTIONAL MATCH (t)<-[:PARTICIPATED_IN]-(ent)
                 RETURN 
-                    {trace_id_prop} AS trace_id,
+                    t.traceId AS trace_id,
                     collect(DISTINCT
                         CASE labels(ent)[0]
                             WHEN 'Process' THEN ent.processName
@@ -442,7 +470,7 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                 query = f"""
                     UNWIND $trace_ids AS trace_id
                     MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
-                    WHERE {trace_id_prop} = trace_id
+                    WHERE t.traceId = trace_id
                     OPTIONAL MATCH (t)<-[:PARTICIPATED_IN]-(ent)
                     WITH collect(DISTINCT
                         CASE labels(ent)[0]
