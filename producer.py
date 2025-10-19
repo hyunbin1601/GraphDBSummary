@@ -313,34 +313,11 @@ if __name__ == "__main__":
                     # "attack_techniques": summary_data.get("attack_techniques", []),
                 }
 
-                # 유사 트레이스 정보 출력
-                similar_trace_ids = results.get("similar_trace_ids", [])
-                print(f"\n🔍 구조적 연결성 분석 결과:")
-                print(f"   📊 유사 트레이스 개수: {len(similar_trace_ids)}")
-                if similar_trace_ids:
-                    print(f"   📋 유사 트레이스 ID 목록:")
-                    for i, trace_id in enumerate(similar_trace_ids, 1):
-                        print(f"      {i}. {trace_id}")
-                else:
-                    print("   ⚠️ 유사한 트레이스를 찾을 수 없습니다.")
-
-                # 요약 정보 출력
-                summary_text = summary_data.get("summary", "")
-                if summary_text:
-                    print(
-                        f"   📝 요약: {summary_text[:100]}{'...' if len(summary_text) > 100 else ''}"
-                    )
-
-                # 공격 기법 정보 출력
-                attack_techniques = summary_data.get("attack_techniques", [])
-                if attack_techniques:
-                    print(f"   ⚔️ 탐지된 공격 기법: {', '.join(attack_techniques)}")
-
                 out_message = {
                     "traceID": source_trace_id,
                     "summary": simple_summary,
                     "long_summary": results.get("long_summary", ""),
-                    "similar_trace_ids": similar_trace_ids,
+                    "similar_trace_ids": results.get("similar_trace_ids", []),
                     "mitigation_suggestions": results.get("mitigation_suggestions", ""),
                 }
                 # passthrough에서 traceID를 제외하고 업데이트 (traceID는 이미 설정됨)
@@ -348,12 +325,16 @@ if __name__ == "__main__":
                 passthrough_copy.pop("traceID", None)
                 out_message.update(passthrough_copy)
 
+                # llm_result 토픽으로 전송할 JSON 결과를 콘솔에 출력
+                print(f"\n📤 llm_result 토픽 출력 결과:")
+                print(json.dumps(out_message, ensure_ascii=False, indent=2))
+                print("=" * 80)
+
                 producer.send(OUTPUT_TOPIC, out_message)
                 producer.flush()
                 print(
                     f"✅ 분석 결과를 Kafka 토픽 '{OUTPUT_TOPIC}'로 전송했습니다. traceID={source_trace_id}"
                 )
-                print("=" * 80)
         except Exception as e:
             print(f"메시지 처리 중 오류: {e}")
             print(f"메시지 내용: {str(message.value)[:200]}...")
