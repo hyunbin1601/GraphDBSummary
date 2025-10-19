@@ -189,7 +189,7 @@ def long_summary(
 {summary_text}
 
 ### 유사한 트레이스 분석
-- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join(similar_trace_ids)}
 
 ### 구조적 유사성 및 연결 분석
 {structural_analysis}
@@ -204,7 +204,7 @@ def long_summary(
 {summary_text}
 
 ### 유사한 트레이스 분석
-- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join(similar_trace_ids)}
 
 ### 구조적 유사성
 {len([s for s in structural_similarity if s['entity_match_count'] > 0])}개의 트레이스에서 구조적 유사성 발견
@@ -269,43 +269,31 @@ def find_similar_traces(driver, summary_text, top_k=3):
         summary_embedding = embedding_model.encode(summary_text)
         similarities = []
 
-        print(
-            f"🔍 데이터베이스에서 {len(list(all_summaries))}개의 Summary를 찾았습니다."
-        )
-
         # all_summaries를 다시 가져와야 함 (이미 소비됨)
         all_summaries = session.run(query)
 
-        record_count = 0
         for record in all_summaries:
-            record_count += 1
             trace_id = record["trace_id"]
             emb = record["embedding"]
-
-            print(
-                f"   📊 Record {record_count}: trace_id={trace_id}, embedding_type={type(emb)}"
-            )
 
             if isinstance(emb, str):
                 try:
                     emb = json.loads(emb)
                 except json.JSONDecodeError:
-                    print(f"   ⚠️ JSON 파싱 실패: {trace_id}")
                     continue
 
             if emb is None:
-                print(f"   ⚠️ Embedding이 None: {trace_id}")
                 continue
 
             sim = cosine_similarity(summary_embedding, emb)
             similarities.append({"trace_id": trace_id, "similarity": sim})
-            print(f"   ✅ 유사도 계산: {trace_id} = {sim:.4f}")
 
-        print(f"📊 총 {len(similarities)}개의 유사도 계산 완료")
         similarities.sort(key=lambda x: x["similarity"], reverse=True)
-
         result = similarities[:top_k]
-        print(f"🎯 상위 {top_k}개 결과: {[r['trace_id'] for r in result]}")
+
+        print(
+            f"✅ 의미적 유사도 상위 {len(result)}개 트레이스: {[r['trace_id'] for r in result]}"
+        )
         return result
 
 
@@ -360,9 +348,7 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
     summary_text = summary_result.get("summary", "")
     print(f"✅ LLM 요약 완료: {len(summary_text)} 문자")
-    print(
-        f"📄 요약 내용: {summary_text[:200]}{'...' if len(summary_text) > 200 else ''}"
-    )
+    print(f"📄 요약 내용: {summary_text}")
 
     if not summary_text:
         print("⚠️ 요약 텍스트가 비어있습니다.")
@@ -630,6 +616,18 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
         print("🎉 analyze_structural_similarity_no_db 완료")
         return result
+
+    except Exception as e:
+        print(f"❌ analyze_structural_similarity_no_db 전체 실패: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return {
+            "summary": {"summary": "분석 실패"},
+            "long_summary": "분석을 완료할 수 없습니다.",
+            "similar_trace_ids": [],
+            "mitigation_suggestions": "분석 실패로 인해 대응 방안을 제시할 수 없습니다.",
+        }
 
 
 #     trace_path = "C:\\Users\\KISIA\\Downloads\\data\\T1018.json"

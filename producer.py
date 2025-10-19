@@ -274,10 +274,13 @@ if __name__ == "__main__":
                     continue
 
                 # 악성 트레이스는 LLM 분석 수행
+                print(f"\n🔍 악성 트레이스 분석 시작: traceID={source_trace_id}")
+                results = None
                 try:
                     results = analyze_structural_similarity_no_db(
                         driver, trace_input, prompt_template, top_k=3
                     )
+                    print(f"✅ 분석 완료")
                 except Exception as e:
                     print(f"⚠️ Neo4j 연결 실패로 인한 오류: {e}")
                     print("🔄 Neo4j 없이 LLM 분석만 수행합니다...")
@@ -305,6 +308,16 @@ if __name__ == "__main__":
                             "similar_trace_ids": [],
                             "mitigation_suggestions": "## 보안 대응 방안\n\n1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료\n2. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행\n3. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지",
                         }
+
+                # results가 None인 경우 기본값 설정
+                if results is None:
+                    print("⚠️ 분석 결과가 None입니다. 기본값으로 설정합니다.")
+                    results = {
+                        "summary": {"summary": "분석 실패"},
+                        "long_summary": "분석을 완료할 수 없습니다.",
+                        "similar_trace_ids": [],
+                        "mitigation_suggestions": "분석 실패로 인해 대응 방안을 제시할 수 없습니다.",
+                    }
 
                 # summary에서 key_entities 제거하고 간단한 요약만 포함
                 summary_data = results.get("summary", {})
@@ -337,4 +350,4 @@ if __name__ == "__main__":
                 )
         except Exception as e:
             print(f"메시지 처리 중 오류: {e}")
-            print(f"메시지 내용: {str(message.value)[:200]}...")
+            print(f"메시지 내용: {str(message.value)}")
