@@ -124,7 +124,7 @@ def summarize_trace_with_llm(trace_input, prompt_template):
 def long_summary(
     driver,
     summary_text,
-    structural_similarity,
+    comparisons,
     indirect_connections,
     semantic_top_traces,
     top_k=3,
@@ -168,7 +168,7 @@ def long_summary(
         # 실제 프롬프트 생성
         prompt = analysis_prompt.replace(
             "{{ structural_similarity }}",
-            json.dumps(structural_similarity, ensure_ascii=False),
+            json.dumps(comparisons, ensure_ascii=False),
         )
         prompt = prompt.replace(
             "{{ indirect_connections }}",
@@ -189,7 +189,7 @@ def long_summary(
 {summary_text}
 
 ### 유사한 트레이스 분석
-- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join(similar_trace_ids)}
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
 
 ### 구조적 유사성 및 연결 분석
 {structural_analysis}
@@ -197,17 +197,16 @@ def long_summary(
 
     except Exception as e:
         # LLM 오류 시 기본 요약 반환
-        long_summary_text = f"""
-## 상세 분석 요약
+        long_summary_text = f"""## 상세 분석 요약
 
 ### 원본 트레이스 요약
 {summary_text}
 
 ### 유사한 트레이스 분석
-- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join(similar_trace_ids)}
+- 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
 
 ### 구조적 유사성
-{len([s for s in structural_similarity if s['entity_match_count'] > 0])}개의 트레이스에서 구조적 유사성 발견
+{len([s for s in comparisons if s['entity_match_count'] > 0])}개의 트레이스에서 구조적 유사성 발견
 
 ### 간접 연결 관계
 {len(indirect_connections)}개의 간접 연결 관계 발견
@@ -269,31 +268,43 @@ def find_similar_traces(driver, summary_text, top_k=3):
         summary_embedding = embedding_model.encode(summary_text)
         similarities = []
 
+        print(
+            f"🔍 데이터베이스에서 {len(list(all_summaries))}개의 Summary를 찾았습니다."
+        )
+
         # all_summaries를 다시 가져와야 함 (이미 소비됨)
         all_summaries = session.run(query)
 
+        record_count = 0
         for record in all_summaries:
+            record_count += 1
             trace_id = record["trace_id"]
             emb = record["embedding"]
+
+            print(
+                f"   📊 Record {record_count}: trace_id={trace_id}, embedding_type={type(emb)}"
+            )
 
             if isinstance(emb, str):
                 try:
                     emb = json.loads(emb)
                 except json.JSONDecodeError:
+                    print(f"   ⚠️ JSON 파싱 실패: {trace_id}")
                     continue
 
             if emb is None:
+                print(f"   ⚠️ Embedding이 None: {trace_id}")
                 continue
 
             sim = cosine_similarity(summary_embedding, emb)
             similarities.append({"trace_id": trace_id, "similarity": sim})
+            print(f"   ✅ 유사도 계산: {trace_id} = {sim:.4f}")
 
+        print(f"📊 총 {len(similarities)}개의 유사도 계산 완료")
         similarities.sort(key=lambda x: x["similarity"], reverse=True)
-        result = similarities[:top_k]
 
-        print(
-            f"✅ 의미적 유사도 상위 {len(result)}개 트레이스: {[r['trace_id'] for r in result]}"
-        )
+        result = similarities[:top_k]
+        print(f"🎯 상위 {top_k}개 결과: {[r['trace_id'] for r in result]}")
         return result
 
 
@@ -338,7 +349,7 @@ def generate_mitigation_prompt(
 
 def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_k=3):
     print("🔍 analyze_structural_similarity_no_db 시작...")
-    
+
     # LLM 요약
     print("📝 LLM 요약 시작...")
     summary_result = summarize_trace_with_llm(new_trace, prompt_template)
@@ -348,7 +359,9 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
     summary_text = summary_result.get("summary", "")
     print(f"✅ LLM 요약 완료: {len(summary_text)} 문자")
-    print(f"📄 요약 내용: {summary_text}")
+    print(
+        f"📄 요약 내용: {summary_text[:200]}{'...' if len(summary_text) > 200 else ''}"
+    )
 
     if not summary_text:
         print("⚠️ 요약 텍스트가 비어있습니다.")
@@ -359,27 +372,36 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
             "mitigation_suggestions": "요약이 없어 대응 방안을 제시할 수 없습니다.",
         }
 
-    # 의미적 유사 트레이스 검색 (선택사항)
+    # 유사 트레이스 검색
     print("🔍 유사 트레이스 검색 시작...")
     similar_ids = []
+    top_similar_traces = []
     try:
+        # Neo4j 연결 테스트
         with driver.session() as session:
             session.run("RETURN 1")
+
         top_similar_traces = find_similar_traces(driver, summary_text, top_k=top_k)
         similar_ids = [t["trace_id"] for t in top_similar_traces]
         print(f"✅ 유사 트레이스 검색 완료: {len(similar_ids)}개")
     except Exception as e:
+        import traceback
+
         print(f"❌ 유사 트레이스 검색 실패 (Neo4j 연결 문제): {e}")
+        print(f"🔎 에러 발생 원인: {type(e).__name__} - {e}")
+        print("🔎 상세 에러 트레이스백:")
+        traceback.print_exc()
         print("⚠️ Neo4j 없이 계속 진행합니다...")
         similar_ids = []
+        top_similar_traces = []
 
-    print(f"✅ 의미적 유사도 상위 {len(similar_ids)}개 트레이스: {similar_ids}")
+    print(f"\n🔍 의미적 유사도 상위 {len(similar_ids)}개 트레이스: {similar_ids}\n")
 
-    # 구조적 유사성 분석 (선택사항)
+    # 구조적 유사성 분석
     print("🔍 구조적 유사성 분석 시작...")
     comparisons = []
     indirect_connections = []
-    
+
     try:
         with driver.session(database=DATABASE) as session:
             # Trace 노드의 실제 속성 확인
@@ -419,8 +441,7 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                         END
                     ) AS entities,
                     collect(DISTINCT tech.name) AS techniques
-
-            """,
+                """,
                 trace_ids=similar_ids,
             )
 
@@ -431,9 +452,7 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                 if isinstance(e, dict) and "value" in e
             )
 
-            comparisons = []
             for record in res:
-
                 db_entities = set(
                     (e or "").strip().lower().replace("\\", "/")
                     for e in record["entities"]
@@ -453,84 +472,87 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
             comparisons.sort(key=lambda x: (x["entity_match_count"]), reverse=True)
 
             # 간접 연결 탐색
-            with driver.session(database=DATABASE) as session:
-                query = f"""
-                    UNWIND $trace_ids AS trace_id
-                    MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
-                    WHERE t.traceId = trace_id
-                    OPTIONAL MATCH (t)<-[:PARTICIPATED_IN]-(ent)
-                    WITH collect(DISTINCT
-                        CASE labels(ent)[0]
-                            WHEN 'Process' THEN ent.processName
-                            WHEN 'File' THEN ent.filePath
-                            WHEN 'User' THEN ent.userName
-                            WHEN 'Ip' THEN ent.ipAddress
-                            WHEN 'Registry' THEN ent.keyPath
-                            ELSE null
-                        END
-                    ) AS groupEntities
-                    UNWIND groupEntities AS e1
-                    UNWIND groupEntities AS e2
-                    WITH e1, e2 WHERE e1 IS NOT NULL AND e2 IS NOT NULL AND e1 < e2
-                    MATCH path = shortestPath(
-                        (n1)-[*..2]-(n2)
-                    )
-                    WHERE 
-                        ( (labels(n1)[0] = 'Process' AND n1.processName = e1) OR
-                        (labels(n1)[0] = 'File' AND n1.filePath = e1) OR
-                        (labels(n1)[0] = 'User' AND n1.userName = e1) OR
-                        (labels(n1)[0] = 'Ip' AND n1.ipAddress = e1) OR
-                        (labels(n1)[0] = 'Registry' AND n1.keyPath = e1) )
-                    AND
-                        ( (labels(n2)[0] = 'Process' AND n2.processName = e2) OR
-                        (labels(n2)[0] = 'File' AND n2.filePath = e2) OR
-                        (labels(n2)[0] = 'User' AND n2.userName = e2) OR
-                        (labels(n2)[0] = 'Ip' AND n2.ipAddress = e2) OR
-                        (labels(n2)[0] = 'Registry' AND n2.keyPath = e2) )
-                    RETURN e1 AS e1_name, e2 AS e2_name,
-                        length(path) AS hops,
-                        [n IN nodes(path) | 
-                            labels(n)[0] + ':' + coalesce(n.name, n.processName, n.filePath, n.userName, n.ipAddress, n.keyPath, '') 
-                        ] AS path_nodes
-                    LIMIT 50
+            query = f"""
+                UNWIND $trace_ids AS trace_id
+                MATCH (s:Summary)-[:SUMMARIZES]->(t:Trace)
+                WHERE t.traceId = trace_id
+                OPTIONAL MATCH (t)<-[:PARTICIPATED_IN]-(ent)
+                WITH collect(DISTINCT
+                    CASE labels(ent)[0]
+                        WHEN 'Process' THEN ent.processName
+                        WHEN 'File' THEN ent.filePath
+                        WHEN 'User' THEN ent.userName
+                        WHEN 'Ip' THEN ent.ipAddress
+                        WHEN 'Registry' THEN ent.keyPath
+                        ELSE null
+                    END
+                ) AS groupEntities
+                UNWIND groupEntities AS e1
+                UNWIND groupEntities AS e2
+                WITH e1, e2 WHERE e1 IS NOT NULL AND e2 IS NOT NULL AND e1 < e2
+                MATCH path = shortestPath(
+                    (n1)-[*..2]-(n2)
+                )
+                WHERE 
+                    ( (labels(n1)[0] = 'Process' AND n1.processName = e1) OR
+                    (labels(n1)[0] = 'File' AND n1.filePath = e1) OR
+                    (labels(n1)[0] = 'User' AND n1.userName = e1) OR
+                    (labels(n1)[0] = 'Ip' AND n1.ipAddress = e1) OR
+                    (labels(n1)[0] = 'Registry' AND n1.keyPath = e1) )
+                AND
+                    ( (labels(n2)[0] = 'Process' AND n2.processName = e2) OR
+                    (labels(n2)[0] = 'File' AND n2.filePath = e2) OR
+                    (labels(n2)[0] = 'User' AND n2.userName = e2) OR
+                    (labels(n2)[0] = 'Ip' AND n2.ipAddress = e2) OR
+                    (labels(n2)[0] = 'Registry' AND n2.keyPath = e2) )
+                RETURN e1 AS e1_name, e2 AS e2_name,
+                    length(path) AS hops,
+                    [n IN nodes(path) | 
+                        labels(n)[0] + ':' + coalesce(n.name, n.processName, n.filePath, n.userName, n.ipAddress, n.keyPath, '') 
+                    ] AS path_nodes
+                LIMIT 50
+            """
+            indirect_connections_result = session.run(query, trace_ids=similar_ids)
+            indirect_connections_raw = [r.data() for r in indirect_connections_result]
 
-                """
-                indirect_connections_result = session.run(query, trace_ids=similar_ids)
-                indirect_connections_raw = [
-                    r.data() for r in indirect_connections_result
-                ]
+            # 중복 제거 (양방향 연결 고려)
+            seen_connections = set()
+            indirect_connections = []
 
-                # 중복 제거 (양방향 연결 고려)
-                seen_connections = set()
-                indirect_connections = []
+            for conn in indirect_connections_raw:
+                e1_name = conn["e1_name"]
+                e2_name = conn["e2_name"]
+                connection_key = tuple(sorted([e1_name, e2_name]))
 
-                for conn in indirect_connections_raw:
-                    e1_name = conn["e1_name"]
-                    e2_name = conn["e2_name"]
-                    connection_key = tuple(sorted([e1_name, e2_name]))
+                if connection_key not in seen_connections:
+                    seen_connections.add(connection_key)
+                    indirect_connections.append(conn)
 
-                    if connection_key not in seen_connections:
-                        seen_connections.add(connection_key)
-                        indirect_connections.append(conn)
-
-        print(f"✅ 구조적 유사성 분석 완료: {len(comparisons)}개 비교, {len(indirect_connections)}개 간접 연결")
+        print(
+            f"✅ 구조적 유사성 분석 완료: {len(comparisons)}개 비교, {len(indirect_connections)}개 간접 연결"
+        )
 
     except Exception as e:
         print(f"❌ 구조적 유사성 분석 실패 (Neo4j 연결 문제): {e}")
         print("⚠️ Neo4j 없이 계속 진행합니다...")
+        comparisons = []
+        indirect_connections = []
 
-    # 상세 요약 생성 (LLM 기반)
+    # 상세 요약 생성
     print("📝 상세 요약 생성 시작...")
     try:
-        # LLM을 사용한 상세 분석
-        analysis_prompt = f"""
-다음은 보안 분석을 위한 트레이스 데이터입니다:
-
-트레이스 요약: {summary_text}
-
-이 트레이스에 대해 다음 형식으로 상세 분석을 수행해주세요:
-
-## 상세 분석 요약
+        if similar_ids:
+            long_summary_result = long_summary(
+                driver,
+                summary_text,
+                comparisons,
+                indirect_connections,
+                top_similar_traces,
+                top_k=3,
+            )
+        else:
+            # Neo4j 없이 간단한 요약 생성
+            long_summary_text = f"""## 상세 분석 요약
 
 ### 원본 트레이스 요약
 {summary_text}
@@ -548,37 +570,31 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 2. 시스템 전체 스캔 수행
 3. 네트워크 트래픽 모니터링 강화
 4. 로그 분석을 통한 추가 위협 탐지
-
-### 유사한 트레이스 분석
-{f"- 상위 {len(similar_ids)}개 유사 트레이스: {', '.join(similar_ids)}" if similar_ids else "- 유사한 트레이스 없음 (Neo4j 연결 실패)"}
 """
-
-        response = llm.invoke(analysis_prompt)
-        long_summary_text = response.content.strip()
-        
-        long_summary_result = {
-            "long_summary": long_summary_text,
-            "similar_trace_ids": similar_ids,
-        }
+            long_summary_result = {
+                "long_summary": long_summary_text.strip(),
+                "similar_trace_ids": similar_ids,
+            }
         print("✅ 상세 요약 생성 완료")
     except Exception as e:
         print(f"❌ 상세 요약 생성 실패: {e}")
         long_summary_result = {
-            "long_summary": f"## 상세 분석 요약\n\n### 원본 트레이스 요약\n{summary_text}\n\n### 분석 결과\n이 트레이스는 악성 활동으로 분류되었습니다.",
+            "long_summary": "상세 요약 생성 실패",
             "similar_trace_ids": similar_ids,
         }
 
-    # 대응 방안 생성 (LLM 기반)
+    # 대응 제안 생성
     print("🛡️ 대응 방안 생성 시작...")
     try:
-        mitigation_prompt = f"""
-다음 트레이스에 대한 보안 대응 방안을 제시해주세요:
-
-트레이스 요약: {summary_text}
-
-다음 형식으로 대응 방안을 작성해주세요:
-
-## 보안 대응 방안
+        if comparisons or indirect_connections:
+            mitigation_prompt = generate_mitigation_prompt(
+                summary_result, comparisons, indirect_connections
+            )
+            mitigation_response = llm.invoke(mitigation_prompt)
+            mitigation_text = mitigation_response.content
+        else:
+            # Neo4j 없이 기본 대응 방안 생성
+            mitigation_text = f"""## 보안 대응 방안
 
 ### 즉시 조치사항
 1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료 및 격리
@@ -600,28 +616,10 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 - **주요 프로세스**: cmd.exe, powershell.exe
 - **의심 활동**: Base64 인코딩된 명령어 실행
 """
-
-        mitigation_response = llm.invoke(mitigation_prompt)
-        mitigation_text = mitigation_response.content.strip()
         print("✅ 대응 방안 생성 완료")
     except Exception as e:
         print(f"❌ 대응 방안 생성 실패: {e}")
-        mitigation_text = """## 보안 대응 방안
-
-### 즉시 조치사항
-1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료 및 격리
-2. **네트워크 차단**: 외부 통신 차단 및 방화벽 규칙 강화
-3. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행
-
-### 중기 대응 방안
-1. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지
-2. **사용자 계정 검토**: 관련 사용자 계정 보안 상태 점검
-3. **시스템 패치**: 보안 패치 적용 및 취약점 점검
-
-### 장기 예방 전략
-1. **모니터링 강화**: 실시간 보안 모니터링 시스템 구축
-2. **사용자 교육**: 보안 인식 교육 및 정책 수립
-3. **정기 점검**: 정기적인 보안 점검 및 침투 테스트 수행"""
+        mitigation_text = "대응 방안 생성 실패"
 
     result = {
         "summary": summary_result,
@@ -632,17 +630,3 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
     print("🎉 analyze_structural_similarity_no_db 완료")
     return result
-
-    except Exception as e:
-        print(f"❌ analyze_structural_similarity_no_db 전체 실패: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "summary": {"summary": "분석 실패"},
-            "long_summary": "분석을 완료할 수 없습니다.",
-            "similar_trace_ids": [],
-            "mitigation_suggestions": "분석 실패로 인해 대응 방안을 제시할 수 없습니다.",
-        }
-
-
-#     trace_path = "C:\\Users\\KISIA\\Downloads\\data\\T1018.json"
