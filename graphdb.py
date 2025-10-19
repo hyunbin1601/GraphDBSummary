@@ -502,6 +502,28 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
             f"✅ 구조적 유사성 분석 완료: {len(comparisons)}개 비교, {len(indirect_connections)}개 간접 연결"
         )
 
+        # 구조적 유사성 분석 결과 상세 출력
+        if comparisons:
+            print(f"\n📊 구조적 유사성 분석 상세:")
+            for i, comp in enumerate(comparisons[:3], 1):  # 상위 3개만 출력
+                print(f"   {i}. Trace ID: {comp['trace_id']}")
+                print(f"      - 공통 엔티티 개수: {comp['entity_match_count']}")
+                if comp["common_entities"]:
+                    print(
+                        f"      - 공통 엔티티: {', '.join(comp['common_entities'][:5])}{'...' if len(comp['common_entities']) > 5 else ''}"
+                    )
+                else:
+                    print(f"      - 공통 엔티티: 없음")
+
+        if indirect_connections:
+            print(f"\n🔗 간접 연결 관계:")
+            for i, conn in enumerate(indirect_connections[:3], 1):  # 상위 3개만 출력
+                print(
+                    f"   {i}. {conn['e1_name']} ↔ {conn['e2_name']} (hops: {conn['hops']})"
+                )
+        else:
+            print(f"\n🔗 간접 연결 관계: 없음")
+
     except Exception as e:
         print(f"❌ 구조적 유사성 분석 실패 (Neo4j 연결 문제): {e}")
         print("⚠️ Neo4j 없이 계속 진행합니다...")
