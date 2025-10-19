@@ -274,9 +274,37 @@ if __name__ == "__main__":
                     continue
 
                 # 악성 트레이스는 LLM 분석 수행
-                results = analyze_structural_similarity_no_db(
-                    driver, trace_input, prompt_template, top_k=5
-                )
+                try:
+                    results = analyze_structural_similarity_no_db(
+                        driver, trace_input, prompt_template, top_k=3
+                    )
+                except Exception as e:
+                    print(f"⚠️ Neo4j 연결 실패로 인한 오류: {e}")
+                    print("🔄 Neo4j 없이 LLM 분석만 수행합니다...")
+
+                    # Neo4j 없이 기본 분석 수행
+                    from graphdb import summarize_trace_with_llm
+
+                    summary_result = summarize_trace_with_llm(
+                        trace_input, prompt_template
+                    )
+
+                    if "error" in summary_result:
+                        print(f"❌ LLM 요약 실패: {summary_result['error']}")
+                        results = {
+                            "summary": {"summary": "분석 실패"},
+                            "long_summary": "분석을 완료할 수 없습니다.",
+                            "similar_trace_ids": [],
+                            "mitigation_suggestions": "분석 실패로 인해 대응 방안을 제시할 수 없습니다.",
+                        }
+                    else:
+                        summary_text = summary_result.get("summary", "")
+                        results = {
+                            "summary": summary_result,
+                            "long_summary": f"## 상세 분석 요약\n\n### 원본 트레이스 요약\n{summary_text}\n\n### 분석 결과\n이 트레이스는 악성 활동으로 분류되었습니다.",
+                            "similar_trace_ids": [],
+                            "mitigation_suggestions": "## 보안 대응 방안\n\n1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료\n2. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행\n3. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지",
+                        }
 
                 # summary에서 key_entities 제거하고 간단한 요약만 포함
                 summary_data = results.get("summary", {})
