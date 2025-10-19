@@ -338,7 +338,7 @@ def generate_mitigation_prompt(
 
 def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_k=3):
     print("🔍 analyze_structural_similarity_no_db 시작...")
-
+    
     # LLM 요약
     print("📝 LLM 요약 시작...")
     summary_result = summarize_trace_with_llm(new_trace, prompt_template)
@@ -359,13 +359,12 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
             "mitigation_suggestions": "요약이 없어 대응 방안을 제시할 수 없습니다.",
         }
 
-    # 의미적 유사 트레이스 검색
+    # 의미적 유사 트레이스 검색 (선택사항)
     print("🔍 유사 트레이스 검색 시작...")
+    similar_ids = []
     try:
-        # Neo4j 연결 테스트
         with driver.session() as session:
             session.run("RETURN 1")
-
         top_similar_traces = find_similar_traces(driver, summary_text, top_k=top_k)
         similar_ids = [t["trace_id"] for t in top_similar_traces]
         print(f"✅ 유사 트레이스 검색 완료: {len(similar_ids)}개")
@@ -373,12 +372,14 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
         print(f"❌ 유사 트레이스 검색 실패 (Neo4j 연결 문제): {e}")
         print("⚠️ Neo4j 없이 계속 진행합니다...")
         similar_ids = []
-        top_similar_traces = []
 
-    print(f"\n🔍 의미적 유사도 상위 {len(similar_ids)}개 트레이스: {similar_ids}\n")
+    print(f"✅ 의미적 유사도 상위 {len(similar_ids)}개 트레이스: {similar_ids}")
 
-    # 구조적 유사성 분석
+    # 구조적 유사성 분석 (선택사항)
     print("🔍 구조적 유사성 분석 시작...")
+    comparisons = []
+    indirect_connections = []
+    
     try:
         with driver.session(database=DATABASE) as session:
             # Trace 노드의 실제 속성 확인
@@ -512,31 +513,23 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                         seen_connections.add(connection_key)
                         indirect_connections.append(conn)
 
-        print(
-            f"✅ 구조적 유사성 분석 완료: {len(comparisons)}개 비교, {len(indirect_connections)}개 간접 연결"
-        )
+        print(f"✅ 구조적 유사성 분석 완료: {len(comparisons)}개 비교, {len(indirect_connections)}개 간접 연결")
 
     except Exception as e:
         print(f"❌ 구조적 유사성 분석 실패 (Neo4j 연결 문제): {e}")
         print("⚠️ Neo4j 없이 계속 진행합니다...")
-        comparisons = []
-        indirect_connections = []
 
-        # 상세 요약 생성
-        print("📝 상세 요약 생성 시작...")
-        try:
-            if similar_ids:
-                long_summary_result = long_summary(
-                    driver,
-                    summary_text,
-                    comparisons,
-                    indirect_connections,
-                    top_similar_traces,
-                    top_k=3,
-                )
-            else:
-                # Neo4j 없이 간단한 요약 생성
-                long_summary_text = f"""
+    # 상세 요약 생성 (LLM 기반)
+    print("📝 상세 요약 생성 시작...")
+    try:
+        # LLM을 사용한 상세 분석
+        analysis_prompt = f"""
+다음은 보안 분석을 위한 트레이스 데이터입니다:
+
+트레이스 요약: {summary_text}
+
+이 트레이스에 대해 다음 형식으로 상세 분석을 수행해주세요:
+
 ## 상세 분석 요약
 
 ### 원본 트레이스 요약
@@ -555,31 +548,36 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 2. 시스템 전체 스캔 수행
 3. 네트워크 트래픽 모니터링 강화
 4. 로그 분석을 통한 추가 위협 탐지
-"""
-                long_summary_result = {
-                    "long_summary": long_summary_text.strip(),
-                    "similar_trace_ids": similar_ids,
-                }
-            print("✅ 상세 요약 생성 완료")
-        except Exception as e:
-            print(f"❌ 상세 요약 생성 실패: {e}")
-            long_summary_result = {
-                "long_summary": "상세 요약 생성 실패",
-                "similar_trace_ids": similar_ids,
-            }
 
-        # 대응 제안 생성
-        print("🛡️ 대응 방안 생성 시작...")
-        try:
-            if comparisons or indirect_connections:
-                mitigation_prompt = generate_mitigation_prompt(
-                    summary_result, comparisons, indirect_connections
-                )
-                mitigation_response = llm.invoke(mitigation_prompt)
-                mitigation_text = mitigation_response.content
-            else:
-                # Neo4j 없이 기본 대응 방안 생성
-                mitigation_text = f"""
+### 유사한 트레이스 분석
+{f"- 상위 {len(similar_ids)}개 유사 트레이스: {', '.join(similar_ids)}" if similar_ids else "- 유사한 트레이스 없음 (Neo4j 연결 실패)"}
+"""
+
+        response = llm.invoke(analysis_prompt)
+        long_summary_text = response.content.strip()
+        
+        long_summary_result = {
+            "long_summary": long_summary_text,
+            "similar_trace_ids": similar_ids,
+        }
+        print("✅ 상세 요약 생성 완료")
+    except Exception as e:
+        print(f"❌ 상세 요약 생성 실패: {e}")
+        long_summary_result = {
+            "long_summary": f"## 상세 분석 요약\n\n### 원본 트레이스 요약\n{summary_text}\n\n### 분석 결과\n이 트레이스는 악성 활동으로 분류되었습니다.",
+            "similar_trace_ids": similar_ids,
+        }
+
+    # 대응 방안 생성 (LLM 기반)
+    print("🛡️ 대응 방안 생성 시작...")
+    try:
+        mitigation_prompt = f"""
+다음 트레이스에 대한 보안 대응 방안을 제시해주세요:
+
+트레이스 요약: {summary_text}
+
+다음 형식으로 대응 방안을 작성해주세요:
+
 ## 보안 대응 방안
 
 ### 즉시 조치사항
@@ -602,25 +600,42 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 - **주요 프로세스**: cmd.exe, powershell.exe
 - **의심 활동**: Base64 인코딩된 명령어 실행
 """
-            print("✅ 대응 방안 생성 완료")
-        except Exception as e:
-            print(f"❌ 대응 방안 생성 실패: {e}")
-            mitigation_text = "대응 방안 생성 실패"
 
-        result = {
-            "summary": summary_result,
-            "long_summary": long_summary_result["long_summary"],
-            "similar_trace_ids": long_summary_result["similar_trace_ids"],
-            "mitigation_suggestions": mitigation_text,
-        }
+        mitigation_response = llm.invoke(mitigation_prompt)
+        mitigation_text = mitigation_response.content.strip()
+        print("✅ 대응 방안 생성 완료")
+    except Exception as e:
+        print(f"❌ 대응 방안 생성 실패: {e}")
+        mitigation_text = """## 보안 대응 방안
 
-        print("🎉 analyze_structural_similarity_no_db 완료")
-        return result
+### 즉시 조치사항
+1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료 및 격리
+2. **네트워크 차단**: 외부 통신 차단 및 방화벽 규칙 강화
+3. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행
+
+### 중기 대응 방안
+1. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지
+2. **사용자 계정 검토**: 관련 사용자 계정 보안 상태 점검
+3. **시스템 패치**: 보안 패치 적용 및 취약점 점검
+
+### 장기 예방 전략
+1. **모니터링 강화**: 실시간 보안 모니터링 시스템 구축
+2. **사용자 교육**: 보안 인식 교육 및 정책 수립
+3. **정기 점검**: 정기적인 보안 점검 및 침투 테스트 수행"""
+
+    result = {
+        "summary": summary_result,
+        "long_summary": long_summary_result["long_summary"],
+        "similar_trace_ids": long_summary_result["similar_trace_ids"],
+        "mitigation_suggestions": mitigation_text,
+    }
+
+    print("🎉 analyze_structural_similarity_no_db 완료")
+    return result
 
     except Exception as e:
         print(f"❌ analyze_structural_similarity_no_db 전체 실패: {e}")
         import traceback
-
         traceback.print_exc()
         return {
             "summary": {"summary": "분석 실패"},
