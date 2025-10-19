@@ -268,39 +268,24 @@ def find_similar_traces(driver, summary_text, top_k=3):
         summary_embedding = embedding_model.encode(summary_text)
         similarities = []
 
-        print(
-            f"🔍 데이터베이스에서 {len(list(all_summaries))}개의 Summary를 찾았습니다."
-        )
-
         # all_summaries를 다시 가져와야 함 (이미 소비됨)
         all_summaries = session.run(query)
 
-        record_count = 0
         for record in all_summaries:
-            record_count += 1
             trace_id = record["trace_id"]
             emb = record["embedding"]
-
-            print(
-                f"   📊 Record {record_count}: trace_id={trace_id}, embedding_type={type(emb)}"
-            )
 
             if isinstance(emb, str):
                 try:
                     emb = json.loads(emb)
                 except json.JSONDecodeError:
-                    print(f"   ⚠️ JSON 파싱 실패: {trace_id}")
                     continue
 
             if emb is None:
-                print(f"   ⚠️ Embedding이 None: {trace_id}")
                 continue
 
             sim = cosine_similarity(summary_embedding, emb)
             similarities.append({"trace_id": trace_id, "similarity": sim})
-            print(f"   ✅ 유사도 계산: {trace_id} = {sim:.4f}")
-
-        print(f"📊 총 {len(similarities)}개의 유사도 계산 완료")
         similarities.sort(key=lambda x: x["similarity"], reverse=True)
 
         result = similarities[:top_k]
@@ -317,12 +302,17 @@ def generate_mitigation_prompt(
     summary_text = summary_result.get("summary", "")
 
     similar_entities = set()
-    for s in structural_similarity:
-        similar_entities.update(s["common_entities"])
+    if structural_similarity:
+        for s in structural_similarity:
+            similar_entities.update(s.get("common_entities", []))
 
-    for c in indirect_connections:
-        similar_entities.add(c["e1_name"])
-        similar_entities.add(c["e2_name"])
+    if indirect_connections:
+        for c in indirect_connections:
+            similar_entities.add(c.get("e1_name", ""))
+            similar_entities.add(c.get("e2_name", ""))
+
+    # 빈 엔티티 제거
+    similar_entities = {e for e in similar_entities if e}
 
     prompt = f"""
     당신은 보안 전문가입니다. 아래 트레이스 분석 정보를 바탕으로 기업 환경에서 발견된 악성 행위에 대한 
@@ -332,7 +322,7 @@ def generate_mitigation_prompt(
     {summary_text}
 
     [연관 엔티티]
-    {', '.join(similar_entities)}
+    {', '.join(similar_entities) if similar_entities else '연관 엔티티 정보 없음'}
 
     [요청]
     1. 탐지된 악성 프로세스 및 파일 격리 방법
@@ -586,36 +576,11 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
     # 대응 제안 생성
     print("🛡️ 대응 방안 생성 시작...")
     try:
-        if comparisons or indirect_connections:
-            mitigation_prompt = generate_mitigation_prompt(
-                summary_result, comparisons, indirect_connections
-            )
-            mitigation_response = llm.invoke(mitigation_prompt)
-            mitigation_text = mitigation_response.content
-        else:
-            # Neo4j 없이 기본 대응 방안 생성
-            mitigation_text = f"""## 보안 대응 방안
-
-### 즉시 조치사항
-1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료 및 격리
-2. **네트워크 차단**: 외부 통신 차단 및 방화벽 규칙 강화
-3. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행
-
-### 중기 대응 방안
-1. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지
-2. **사용자 계정 검토**: 관련 사용자 계정 보안 상태 점검
-3. **시스템 패치**: 보안 패치 적용 및 취약점 점검
-
-### 장기 예방 전략
-1. **모니터링 강화**: 실시간 보안 모니터링 시스템 구축
-2. **사용자 교육**: 보안 인식 교육 및 정책 수립
-3. **정기 점검**: 정기적인 보안 점검 및 침투 테스트 수행
-
-### 분석된 위협 정보
-- **탐지된 공격 기법**: {summary_result.get('attack_techniques', ['Unknown'])}
-- **주요 프로세스**: cmd.exe, powershell.exe
-- **의심 활동**: Base64 인코딩된 명령어 실행
-"""
+        mitigation_prompt = generate_mitigation_prompt(
+            summary_result, comparisons, indirect_connections
+        )
+        mitigation_response = llm.invoke(mitigation_prompt)
+        mitigation_text = mitigation_response.content
         print("✅ 대응 방안 생성 완료")
     except Exception as e:
         print(f"❌ 대응 방안 생성 실패: {e}")
