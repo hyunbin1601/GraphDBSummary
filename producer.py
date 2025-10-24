@@ -302,11 +302,57 @@ if __name__ == "__main__":
                         }
                     else:
                         summary_text = summary_result.get("summary", "")
-                        results = {
-                            "summary": summary_result,
-                            "long_summary": f"""## 상세 분석 요약
 
-### 원본 트레이스 요약
+                        # graphdb.py의 Neo4j 없이 실행되는 부분과 동일한 방식 사용
+                        from graphdb import generate_mitigation_prompt
+                        from llm import llm
+
+                        # CoT 방식의 상세 분석 보고서 생성 (graphdb.py와 동일)
+                        cot_prompt_no_neo4j = f"""
+당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적인 악성 행위 분석 보고서를 작성해주세요.
+
+[원본 트레이스 요약]
+{summary_text}
+
+[공격 기법 정보]
+{summary_result.get('attack_techniques', [])}
+
+다음 형식으로 분석 보고서를 작성해주세요:
+
+## 악성 행위 상세 분석
+
+### 1. 공격 흐름 개요
+[전체적인 공격 과정을 시간순으로 요약]
+
+### 2. 주요 악성 행위 분석
+[각 단계별 상세 분석]
+
+### 3. 사용된 공격 기법 및 도구
+[발견된 공격 기법과 사용된 도구들]
+
+### 4. 방어 우회 시도
+[백신 우회, 탐지 회피 등의 시도]
+
+### 5. 네트워크 활동 및 C2 통신
+[외부 통신 시도, C2 서버 연결 등]
+
+### 6. 구조적 유사성 분석 결과
+Neo4j 데이터베이스 연결이 없어 구조적 유사성 분석을 수행할 수 없습니다.
+
+### 7. 보안 위협 평가 및 결론
+[전체적인 위협 수준과 즉시 조치 필요성]
+
+분석은 한국어로 작성하고, 각 섹션은 구체적이고 실무진이 이해하기 쉽게 설명해주세요.
+"""
+
+                        try:
+                            cot_response = llm.invoke(cot_prompt_no_neo4j)
+                            long_summary_text = cot_response.content.strip()
+                        except Exception:
+                            # CoT 실패 시 기본 템플릿 사용
+                            long_summary_text = f"""## 악성 행위 상세 분석
+
+### 공격 흐름 개요
 {summary_text}
 
 ### 분석 결과
@@ -317,33 +363,28 @@ if __name__ == "__main__":
 - 의심스러운 프로세스 생성 패턴
 - Sigma 룰 매칭: {summary_result.get('attack_techniques', [])}
 
-### 보안 권고사항
-1. 해당 프로세스 즉시 격리
-2. 시스템 전체 스캔 수행
-3. 네트워크 트래픽 모니터링 강화
-4. 로그 분석을 통한 추가 위협 탐지""",
+### 보안 위협 평가
+이 트레이스는 악성 활동으로 분류되었으며, 즉시 격리 및 분석이 필요합니다.
+"""
+
+                        # 대응 방안 생성 (graphdb.py의 함수 사용)
+                        try:
+                            mitigation_prompt = generate_mitigation_prompt(
+                                summary_result, [], []  # 빈 리스트로 전달 (Neo4j 없음)
+                            )
+                            mitigation_response = llm.invoke(mitigation_prompt)
+                            mitigation_text = mitigation_response.content
+                        except Exception as e:
+                            print(f"❌ 대응 방안 생성 실패: {e}")
+                            mitigation_text = "대응 방안 생성 실패"
+
+                        results = {
+                            "summary": summary_result,
+                            "long_summary": long_summary_text,
                             "similar_trace_ids": [],
-                            "mitigation_suggestions": """## 보안 대응 방안
-
-### 즉시 조치사항
-1. **프로세스 격리**: 의심스러운 프로세스 즉시 종료 및 격리
-2. **네트워크 차단**: 외부 통신 차단 및 방화벽 규칙 강화
-3. **시스템 스캔**: 전체 시스템 악성코드 스캔 수행
-
-### 중기 대응 방안
-1. **로그 분석**: 시스템 로그 전체 분석을 통한 추가 위협 탐지
-2. **사용자 계정 검토**: 관련 사용자 계정 보안 상태 점검
-3. **시스템 패치**: 보안 패치 적용 및 취약점 점검
-
-### 장기 예방 전략
-1. **모니터링 강화**: 실시간 보안 모니터링 시스템 구축
-2. **사용자 교육**: 보안 인식 교육 및 정책 수립
-3. **정기 점검**: 정기적인 보안 점검 및 침투 테스트 수행
-
-### 분석된 위협 정보
-- **탐지된 공격 기법**: {summary_result.get('attack_techniques', ['Unknown'])}
-- **주요 프로세스**: cmd.exe, powershell.exe
-- **의심 활동**: Base64 인코딩된 명령어 실행""",
+                            "structural_similarity": [],  # Neo4j 없이 실행되므로 빈 리스트
+                            "indirect_connections": [],  # Neo4j 없이 실행되므로 빈 리스트
+                            "mitigation_suggestions": mitigation_text,
                         }
 
                 # results가 None인 경우 기본값 설정
@@ -368,6 +409,8 @@ if __name__ == "__main__":
                     "summary": simple_summary,
                     "long_summary": results.get("long_summary", ""),
                     "similar_trace_ids": results.get("similar_trace_ids", []),
+                    "structural_similarity": results.get("structural_similarity", []),
+                    "indirect_connections": results.get("indirect_connections", []),
                     "mitigation_suggestions": results.get("mitigation_suggestions", ""),
                 }
                 # passthrough에서 traceID를 제외하고 업데이트 (traceID는 이미 설정됨)
@@ -377,7 +420,13 @@ if __name__ == "__main__":
 
                 # llm_result 토픽으로 전송할 JSON 결과를 콘솔에 출력
                 print(f"\n📤 llm_result 토픽 출력 결과:")
-                print(json.dumps(out_message, ensure_ascii=False, indent=2))
+                print("=" * 80)
+                print("🔍 간단 요약:")
+                print(f"   {simple_summary.get('summary', '')}")
+                print("\n📄 상세 분석 보고서:")
+                print(out_message.get("long_summary", ""))
+                print("\n🛡️ 대응 방안:")
+                print(out_message.get("mitigation_suggestions", ""))
                 print("=" * 80)
 
                 producer.send(OUTPUT_TOPIC, out_message)

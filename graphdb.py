@@ -613,10 +613,52 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
                 top_k=3,
             )
         else:
-            # Neo4j 없이 간단한 요약 생성
-            long_summary_text = f"""## 상세 분석 요약
+            # Neo4j 없이 CoT 방식 요약 생성
+            cot_prompt_no_neo4j = f"""
+당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적인 악성 행위 분석 보고서를 작성해주세요.
 
-### 원본 트레이스 요약
+[원본 트레이스 요약]
+{summary_text}
+
+[공격 기법 정보]
+{summary_result.get('attack_techniques', [])}
+
+다음 형식으로 분석 보고서를 작성해주세요:
+
+## 악성 행위 상세 분석
+
+### 1. 공격 흐름 개요
+[전체적인 공격 과정을 시간순으로 요약]
+
+### 2. 주요 악성 행위 분석
+[각 단계별 상세 분석]
+
+### 3. 사용된 공격 기법 및 도구
+[발견된 공격 기법과 사용된 도구들]
+
+### 4. 방어 우회 시도
+[백신 우회, 탐지 회피 등의 시도]
+
+### 5. 네트워크 활동 및 C2 통신
+[외부 통신 시도, C2 서버 연결 등]
+
+### 6. 구조적 유사성 분석 결과
+Neo4j 데이터베이스 연결이 없어 구조적 유사성 분석을 수행할 수 없습니다.
+
+### 7. 보안 위협 평가 및 결론
+[전체적인 위협 수준과 즉시 조치 필요성]
+
+분석은 한국어로 작성하고, 각 섹션은 구체적이고 실무진이 이해하기 쉽게 설명해주세요.
+"""
+
+            try:
+                cot_response = llm.invoke(cot_prompt_no_neo4j)
+                long_summary_text = cot_response.content.strip()
+            except Exception:
+                # CoT 실패 시 기본 템플릿 사용
+                long_summary_text = f"""## 악성 행위 상세 분석
+
+### 공격 흐름 개요
 {summary_text}
 
 ### 분석 결과
@@ -627,11 +669,8 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 - 의심스러운 프로세스 생성 패턴
 - Sigma 룰 매칭: {summary_result.get('attack_techniques', [])}
 
-### 보안 권고사항
-1. 해당 프로세스 즉시 격리
-2. 시스템 전체 스캔 수행
-3. 네트워크 트래픽 모니터링 강화
-4. 로그 분석을 통한 추가 위협 탐지
+### 보안 위협 평가
+이 트레이스는 악성 활동으로 분류되었으며, 즉시 격리 및 분석이 필요합니다.
 """
             long_summary_result = {
                 "long_summary": long_summary_text.strip(),
@@ -662,6 +701,8 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
         "summary": summary_result,
         "long_summary": long_summary_result["long_summary"],
         "similar_trace_ids": long_summary_result["similar_trace_ids"],
+        "structural_similarity": comparisons,  # 구조적 유사성 분석 결과
+        "indirect_connections": indirect_connections,  # 간접 연결 분석 결과
         "mitigation_suggestions": mitigation_text,
     }
 
