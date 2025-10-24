@@ -179,6 +179,34 @@ def long_summary(
         response = llm.invoke(prompt)
         structural_analysis = response.content.strip()
 
+        # 구조적 분석 데이터를 한국어로 해석하는 프롬프트
+        structural_data_prompt = f"""
+다음은 새로운 공격 트레이스와 기존 트레이스들 간의 구조적 유사성 분석 결과입니다.
+
+[구조적 유사성 데이터]
+{json.dumps(comparisons, ensure_ascii=False, indent=2)}
+
+[간접 연결 관계 데이터]
+{json.dumps(indirect_connections, ensure_ascii=False, indent=2)}
+
+이 데이터를 기반으로 다음 내용을 한국어로 분석해주세요:
+
+**구조적 유사성 분석**:
+   - 공통 엔티티가 있는 트레이스들의 특징
+   - 주요 공통 엔티티 (프로세스, 파일, IP, 레지스트리 등)
+   - 유사성 점수가 높은 트레이스들의 공통 패턴
+
+
+분석은 자연스러운 한국어로 작성하고, 구체적인 데이터를 인용하여 설명해주세요.
+"""
+
+        try:
+            structural_data_response = llm.invoke(structural_data_prompt)
+            structural_data_analysis = structural_data_response.content.strip()
+        except Exception as e:
+            print(f"❌ 구조적 데이터 분석 실패: {e}")
+            structural_data_analysis = "구조적 데이터 분석을 수행할 수 없습니다."
+
         # CoT 방식의 상세 분석 보고서 생성
         cot_prompt = f"""
 당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적이고 상세한 악성 행위 분석 보고서를 작성해주세요.
@@ -188,6 +216,9 @@ def long_summary(
 
 [구조적 유사성 분석 결과]
 {structural_analysis}
+
+[구조적 데이터 상세 분석]
+{structural_data_analysis}
 
 [유사한 트레이스 정보]
 - 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
@@ -225,6 +256,30 @@ def long_summary(
 
     except Exception as e:
         # LLM 오류 시 기본 CoT 분석 보고서 생성
+        structural_data_prompt_fallback = f"""
+다음은 새로운 공격 트레이스와 기존 트레이스들 간의 구조적 유사성 분석 결과입니다.
+
+[구조적 유사성 데이터]
+{json.dumps(comparisons, ensure_ascii=False, indent=2)}
+
+[간접 연결 관계 데이터]
+{json.dumps(indirect_connections, ensure_ascii=False, indent=2)}
+
+이 데이터를 기반으로 다음 내용을 한국어로 분석해주세요:
+
+1. **구조적 유사성 분석**: 공통 엔티티가 있는 트레이스들의 특징과 주요 공통 엔티티
+2. **간접 연결 관계 분석**: 엔티티 간의 연결 경로와 의미 있는 연결 관계
+3. **전체적인 구조적 인사이트**: 공격 그룹이나 공격 도구와의 유사성, 기존 공격 패턴과의 연관성
+
+분석은 자연스러운 한국어로 작성하고, 구체적인 데이터를 인용하여 설명해주세요.
+"""
+
+        try:
+            structural_data_response = llm.invoke(structural_data_prompt_fallback)
+            structural_data_analysis = structural_data_response.content.strip()
+        except Exception:
+            structural_data_analysis = f"구조적 유사성: {len([s for s in comparisons if s['entity_match_count'] > 0])}개 트레이스에서 유사성 발견, 간접 연결: {len(indirect_connections)}개 관계 발견"
+
         cot_prompt_fallback = f"""
 당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적인 악성 행위 분석 보고서를 작성해주세요.
 
@@ -234,9 +289,8 @@ def long_summary(
 [유사한 트레이스 정보]
 - 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
 
-[구조적 유사성 통계]
-- {len([s for s in comparisons if s['entity_match_count'] > 0])}개의 트레이스에서 구조적 유사성 발견
-- {len(indirect_connections)}개의 간접 연결 관계 발견
+[구조적 데이터 상세 분석]
+{structural_data_analysis}
 
 다음 형식으로 분석 보고서를 작성해주세요:
 
