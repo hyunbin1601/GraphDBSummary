@@ -7,7 +7,8 @@ from sentence_transformers import SentenceTransformer
 
 DATABASE = "neo4j"
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # 더 작은 모델 사용
+embedding_model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+# 더 작은 모델 사용
 
 
 def create_summary_context(trace_data):
@@ -129,7 +130,7 @@ def long_summary(
     semantic_top_traces,
     top_k=3,
 ):
-    """구조적 유사성, 간접 연결, 의미적 유사 트레이스를 활용한 상세 요약 생성"""
+    # 구조적 유사성, 간접 연결, 의미적 유사 트레이스를 활용한 상세 요약 생성
 
     # 유사 트레이스 ID만 추출 (상위 3개)
     similar_trace_ids = [t["trace_id"] for t in semantic_top_traces[:top_k]]
@@ -142,20 +143,15 @@ def long_summary(
 1. structural_similarity: 각 트레이스별로 공통된 엔티티와 일치 개수(entity_match_count)
 2. indirect_connections: 엔티티 간의 간접 연결 관계(최대 2-hop 경로)
 
-이 데이터를 기반으로 아래 내용을 **자연어로 종합적으로 요약**하세요.
+이 데이터를 기반으로 아래 내용을 **사실 기반 정확하고 구체적으로 작성해주세요.**
 
 요약 시 포함할 내용:
-- 전반적인 구조적 유사성 경향  
+- 구조적 유사성
   (공통 엔티티가 많은 트레이스들의 특징, 주요 유사 구조나 공격 패턴)
 - 반복적으로 나타나는 핵심 엔티티(Process, File, IP, Registry 등)
 - 간접 연결에서 의미 있는 관계  
   (예: 동일 파일을 여러 프로세스가 접근, 특정 IP로의 공통 네트워크 연결 등)
-- 전체적으로 어떤 공격 흐름 또는 전술과 유사한지  
-- 분석 결과에서 도출되는 구조적 인사이트나 시사점  
 
-출력은 자연스러운 분석 보고서처럼 작성하세요.  
-불필요한 형식 없이 문단 단위로 정리하고,  
-필요하면 bullet point를 사용해도 좋습니다.
 
 데이터:
 {
@@ -179,34 +175,6 @@ def long_summary(
         response = llm.invoke(prompt)
         structural_analysis = response.content.strip()
 
-        # 구조적 분석 데이터를 한국어로 해석하는 프롬프트
-        structural_data_prompt = f"""
-다음은 새로운 공격 트레이스와 기존 트레이스들 간의 구조적 유사성 분석 결과입니다.
-
-[구조적 유사성 데이터]
-{json.dumps(comparisons, ensure_ascii=False, indent=2)}
-
-[간접 연결 관계 데이터]
-{json.dumps(indirect_connections, ensure_ascii=False, indent=2)}
-
-이 데이터를 기반으로 다음 내용을 한국어로 분석해주세요:
-
-**구조적 유사성 분석**:
-   - 공통 엔티티가 있는 트레이스들의 특징
-   - 주요 공통 엔티티 (프로세스, 파일, IP, 레지스트리 등)
-   - 유사성 점수가 높은 트레이스들의 공통 패턴
-
-
-분석은 자연스러운 한국어로 작성하고, 구체적인 데이터를 인용하여 설명해주세요.
-"""
-
-        try:
-            structural_data_response = llm.invoke(structural_data_prompt)
-            structural_data_analysis = structural_data_response.content.strip()
-        except Exception as e:
-            print(f"❌ 구조적 데이터 분석 실패: {e}")
-            structural_data_analysis = "구조적 데이터 분석을 수행할 수 없습니다."
-
         # CoT 방식의 상세 분석 보고서 생성
         cot_prompt = f"""
 당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적이고 상세한 악성 행위 분석 보고서를 작성해주세요.
@@ -216,9 +184,6 @@ def long_summary(
 
 [구조적 유사성 분석 결과]
 {structural_analysis}
-
-[구조적 데이터 상세 분석]
-{structural_data_analysis}
 
 [유사한 트레이스 정보]
 - 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
@@ -245,40 +210,17 @@ def long_summary(
 ### 6. 구조적 유사성 분석 결과
 [기존 트레이스와의 유사점, 공통 패턴]
 
-### 7. 보안 위협 평가 및 결론
-[전체적인 위협 수준과 즉시 조치 필요성]
 
-분석은 한국어로 작성하고, 각 섹션은 구체적이고 실무진이 이해하기 쉽게 설명해주세요.
+분석은 한국어로 작성하고 사실에 기반해서 정확히, 애매한 표현 없이 구체적으로 작성해 주세요. 입력되는 데이터는 대부분 악성으로 판단된 데이터입니다. 
 """
 
         cot_response = llm.invoke(cot_prompt)
         long_summary_text = cot_response.content.strip()
 
     except Exception as e:
-        # LLM 오류 시 기본 CoT 분석 보고서 생성
-        structural_data_prompt_fallback = f"""
-다음은 새로운 공격 트레이스와 기존 트레이스들 간의 구조적 유사성 분석 결과입니다.
-
-[구조적 유사성 데이터]
-{json.dumps(comparisons, ensure_ascii=False, indent=2)}
-
-[간접 연결 관계 데이터]
-{json.dumps(indirect_connections, ensure_ascii=False, indent=2)}
-
-이 데이터를 기반으로 다음 내용을 한국어로 분석해주세요:
-
-1. **구조적 유사성 분석**: 공통 엔티티가 있는 트레이스들의 특징과 주요 공통 엔티티
-2. **간접 연결 관계 분석**: 엔티티 간의 연결 경로와 의미 있는 연결 관계
-3. **전체적인 구조적 인사이트**: 공격 그룹이나 공격 도구와의 유사성, 기존 공격 패턴과의 연관성
-
-분석은 자연스러운 한국어로 작성하고, 구체적인 데이터를 인용하여 설명해주세요.
-"""
-
-        try:
-            structural_data_response = llm.invoke(structural_data_prompt_fallback)
-            structural_data_analysis = structural_data_response.content.strip()
-        except Exception:
-            structural_data_analysis = f"구조적 유사성: {len([s for s in comparisons if s['entity_match_count'] > 0])}개 트레이스에서 유사성 발견, 간접 연결: {len(indirect_connections)}개 관계 발견"
+        print(f"❌ LLM 호출 실패: {e}")
+        # 폴백: 간단한 구조적 정보만 포함
+        structural_info = f"구조적 유사성: {len([s for s in comparisons if s.get('entity_match_count', 0) > 0])}개 트레이스에서 유사성 발견, 간접 연결: {len(indirect_connections)}개 관계 발견"
 
         cot_prompt_fallback = f"""
 당신은 보안 분석 전문가입니다. 다음 정보를 바탕으로 체계적인 악성 행위 분석 보고서를 작성해주세요.
@@ -289,8 +231,8 @@ def long_summary(
 [유사한 트레이스 정보]
 - 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
 
-[구조적 데이터 상세 분석]
-{structural_data_analysis}
+[구조적 유사성 정보]
+{structural_info}
 
 다음 형식으로 분석 보고서를 작성해주세요:
 
@@ -314,10 +256,8 @@ def long_summary(
 ### 6. 구조적 유사성 분석 결과
 이 트레이스는 {len(similar_trace_ids)}개의 유사한 트레이스와 연관되어 있으며, 총 {len(indirect_connections)}개의 간접 연결을 통해 다른 엔티티들과 연결되어 있습니다.
 
-### 7. 보안 위협 평가 및 결론
-[전체적인 위협 수준과 즉시 조치 필요성]
 
-분석은 한국어로 작성하고, 각 섹션은 구체적이고 실무진이 이해하기 쉽게 설명해주세요.
+분석은 한국어로 작성하고, 사실에 기반에서 애매한 표현 없이 정확히, 구체적으로 작성해 주세요.
 """
 
         try:
