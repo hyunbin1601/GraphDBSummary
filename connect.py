@@ -14,9 +14,7 @@ DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 
 def model_llm_summary_in_db(driver, summary_data):
-    """
-    JSON에서 읽어온 하나의 요약+임베딩 데이터를 기존 DB에 MERGE하여 추가합니다.
-    """
+    # json에서 읽어온 하나의 요약+임베딩 데이터를 기존 DB에 MERGE하여 추
     trace_id = summary_data.get("traceid")
     summary_text = summary_data.get("summary")
     key_entities = summary_data.get("key_entities", [])

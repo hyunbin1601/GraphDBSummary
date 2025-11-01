@@ -227,35 +227,85 @@ def long_summary(
 [유사한 트레이스 정보]
 - 상위 {len(similar_trace_ids)}개 유사 트레이스: {', '.join([tid[:8] + '...' for tid in similar_trace_ids])}
 
-다음 구조로 전문 보안 보고서를 작성하세요:
+다음 구조로 전문 보안 분석 보고서를 작성하세요:
 
 ## 악성 행위 상세 분석
 
 ### 1. 공격 흐름 개요 (Attack Flow)
 **공격 흐름 그래프를 그릴 수 있을 만큼 각 단계를 자세히, 정확하게 작성하세요.**
 
-**필수 포함 사항**:
-- **호스트 정보**: 호스트명, 도메인/워크그룹, 사용자 계정
-  - 예: "DESKTOP-[호스트명] (WORKGROUP 소속)에서 공격이 시작됨"
-- **단계별 프로세스 실행 체인**: 각 프로세스 단계를 명확히 번호로 구분
-  - 예: "단계 1: Explorer.EXE (parent process) 실행"
-  - 예: "단계 2: Explorer.EXE가 setup.exe (child process) 실행"
-  - 예: "단계 3: setup.exe가 cmd.exe (child process) 실행"
-  - 예: "단계 4: cmd.exe가 tasklist.exe, findstr.exe, extrac32.exe, Riding.pif를 병렬로 실행"
-- **부모-자식 프로세스 관계**: 각 프로세스의 Real Parent Process, Parent Process 명시
-  - 예: "svchost.exe (Real Parent Process)와 연관"
-  - 예: "Explorer.EXE (parent process) → setup.exe (process) → cmd.exe (child process)"
-- **DLL 및 파일 연관**: 각 프로세스와 연관된 DLL, 파일 정보
-  - 예: "setup.exe는 nsExec.dll과 연관"
-  - 예: "cmd.exe는 logs와 연관"
-- **이벤트 카운트**: 각 프로세스에서 발생한 파일/레지스트리/네트워크 이벤트 수
-  - 예: "setup.exe: 12 file events, 1 registry events"
-  - 예: "cmd.exe: 8 file events"
-  - 예: "findstr.exe: 14 file events"
-  - 예: "Riding.pif: 4 file events, 4 network events (outgoing 4 connections)"
-- 공격 타임라인을 초기부터 시간순으로 단계별로 상세히 서술
-- 각 단계의 프로세스 실행, 파일 조작, 네트워크 활동의 인과관계를 명확히 설명
-- 공격 체인의 모든 단계를 누락 없이 포함
+**⚠️ 필수: 아래 모든 정보를 빠짐없이 포함해야 합니다:**
+
+**1.1 호스트 및 환경 정보**
+- 호스트명: [정확한 호스트명 기재]
+- 도메인/워크그룹: [도메인 또는 워크그룹명]
+- 사용자 계정: [실행된 사용자 계정]
+- 운영체제: [OS 정보 (가능한 경우)]
+
+**1.2 프로세스 실행 체인 (단계별 상세 기술)**
+각 프로세스를 다음 형식으로 작성:
+
+**단계 1: [프로세스명] 실행**
+- 프로세스 경로: [전체 경로]
+- Parent Process: [부모 프로세스명]
+- Real Parent Process: [실제 부모 프로세스명]
+- 연관 DLL: [관련 DLL 파일들]
+- 연관 파일: [관련 파일들]
+- 이벤트 카운트:
+  * 파일 이벤트: [숫자]개
+  * 레지스트리 이벤트: [숫자]개
+  * 네트워크 이벤트: [숫자]개
+- 명령줄 인수: [실행 인수 (가능한 경우)]
+
+**단계 2: [프로세스명] 실행**
+[동일한 형식으로 반복]
+
+**⚠️ 중요: 모든 프로세스를 시간 순서대로 누락 없이 기재하세요.**
+
+**1.3 프로세스 관계 다이어그램**
+텍스트 형식으로 부모-자식 관계를 명확히 표현:
+```
+[Real Parent] → [Parent] → [Child 1]
+                         → [Child 2]
+                         → [Child 3]
+```
+
+**1.4 주요 파일 상세 정보**
+각 파일에 대해:
+- 파일명: [파일명]
+- 전체 경로: [경로]
+- 파일 크기: [크기] KB/MB (가능한 경우)
+- 생성/수정 작업: [작업 유형]
+- 연관 프로세스: [프로세스명]
+
+**예시:**
+- 파일명: setup.exe
+- 전체 경로: C:\\Users\\[user]\\AppData\\Local\\Temp\\setup.exe
+- Parent Process: Explorer.EXE
+- 연관 DLL: nsExec.dll
+- 이벤트 카운트: 12 file events, 1 registry event
+
+**1.5 네트워크 활동 상세**
+각 네트워크 연결에 대해:
+- 프로세스명: [프로세스명]
+- 목적지 IP: [IP 주소]
+- 목적지 포트: [포트 번호]
+- 프로토콜: [TCP/UDP]
+- 연결 방향: outgoing/incoming
+- 연결 수: [숫자]개
+
+**예시:**
+- 프로세스명: Riding.pif
+- 네트워크 이벤트: 4개 (outgoing 4 connections)
+- 파일 이벤트: 4개
+- 목적지: [IP:Port]
+
+**⚠️ 작성 시 주의사항:**
+1. 위의 모든 섹션(1.1~1.5)을 반드시 포함하세요
+2. [괄호] 안의 정보는 실제 데이터로 채워야 합니다
+3. 각 프로세스의 부모-자식 관계를 명확히 표시하세요
+4. 시간 순서를 정확히 지켜주세요
+5. 이벤트 카운트는 정확한 숫자로 기재하세요
 
 ### 2. 주요 악성 행위 분석
 각 공격 단계를 다음과 같이 세분화하여 분석하세요:
@@ -346,10 +396,58 @@ def long_summary(
 - "~할 수 있다", "~인 것으로 보인다" 같은 추측보다는 "관찰됨", "확인됨", "기록됨" 같은 사실 기반 표현을 사용하세요.
 - 한국어로 작성하고, 지니언스 리포트와 같은 전문적이고 권위 있는 문체를 유지하세요.
 - 코드를 작성할 때, 그 이외의 상황에서도 마크다운 코드의 블록 표시(```)나 코드 블록 닫기 표시를 사용하지 마세요
+
+**📋 작성 완료 체크리스트 (반드시 확인):**
+- [ ] 호스트명, 도메인/워크그룹 기재
+- [ ] 모든 프로세스를 단계별로 번호 부여
+- [ ] 각 프로세스의 Parent Process, Real Parent Process 명시
+- [ ] 연관 DLL 및 파일 정보 포함
+- [ ] 파일/레지스트리/네트워크 이벤트 수 카운트
+- [ ] 네트워크 연결 정보 (IP, 포트, 연결 수)
+- [ ] 시간 순서대로 작성
+- [ ] 프로세스 관계 다이어그램 포함
+- [ ] 상세 이벤트 정보 (Event Details) 모든 하위 섹션 포함
+
+**위 체크리스트의 모든 항목이 보고서에 포함되었는지 확인한 후 출력하세요.**
 """
 
         cot_response = llm.invoke(cot_prompt)
         long_summary_text = cot_response.content.strip()
+
+        # 필수 키워드 검증
+        required_keywords = [
+            "호스트명",
+            "Parent Process",
+            "Real Parent Process",
+            "이벤트 카운트",
+            "파일 이벤트",
+            "네트워크 이벤트",
+            "단계 1",
+            "단계 2",
+        ]
+
+        missing_keywords = [
+            kw for kw in required_keywords if kw not in long_summary_text
+        ]
+
+        if missing_keywords:
+            print(f"⚠️ 누락된 정보 감지: {', '.join(missing_keywords)}")
+            print("⚠️ 보고서를 재생성합니다...")
+
+            # 재시도 프롬프트
+            retry_prompt = f"""
+이전에 생성한 보고서에서 다음 정보가 누락되었습니다: {', '.join(missing_keywords)}
+
+다음 체크리스트를 반드시 확인하고 모든 항목을 포함하여 보고서를 다시 작성해주세요:
+
+{cot_prompt}
+
+**⚠️ 특히 다음 항목을 반드시 포함하세요:**
+{chr(10).join(['- ' + kw for kw in missing_keywords])}
+"""
+            cot_response = llm.invoke(retry_prompt)
+            long_summary_text = cot_response.content.strip()
+            print("✅ 보고서 재생성 완료")
 
     except Exception as e:
         print(f"❌ LLM 호출 실패: {e}")
@@ -417,7 +515,6 @@ def long_summary(
 
 ### 7. 구조적 유사성 분석 결과
 이 트레이스는 {len(similar_trace_ids)}개 유사 트레이스와 연관되어 있으며, {len(indirect_connections)}개 간접 연결 관계가 확인되었습니다.
-
 
 **작성 지침**: 사실 기반 표현 사용, 전문 보안 용어 활용, 한국어로 권위 있는 문체 유지, 공격 흐름 그래프를 그릴 수 있도록 각 프로세스 단계를 명확히 번호로 구분하고 부모-자식 관계를 정확히 기술
 """
@@ -836,7 +933,6 @@ def analyze_structural_similarity_no_db(driver, new_trace, prompt_template, top_
 
 ### 7. 구조적 유사성 분석 결과
 Neo4j 데이터베이스 연결이 없어 구조적 유사성 분석을 수행할 수 없습니다.
-
 
 분석은 한국어로 작성하고, 각 섹션은 구체적이고 자세히 정확하게, 이해하기 쉽게 설명해주세요.
 공격 흐름 그래프를 그릴 수 있도록 각 프로세스 단계를 명확히 번호로 구분하고 부모-자식 관계를 정확히 기술해주세요.

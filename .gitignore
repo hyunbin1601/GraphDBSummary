@@ -1,0 +1,34 @@
+# 환경 변수 파일
+.env
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 테스트 결과 파일
+*.json
+!requirements.txt
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# IDE 설정
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 파일
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 로그 파일
+*.log
+
+# 임시 파일
+*.tmp
+*.temp
